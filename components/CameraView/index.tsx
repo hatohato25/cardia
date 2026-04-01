@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
-import type { WorkerInMessage, WorkerOutMessage, OcrResponse, PriceResponse } from "@/types";
+import type { OcrResponse, PriceResponse } from "@/types";
 import { useCameraStream } from "./useCameraStream";
 import GuideOverlay from "./GuideOverlay";
 
@@ -20,7 +20,6 @@ type FetchStatus =
 export default function CameraView() {
   const workerRef = useRef<Worker | null>(null);
   const { videoRef, cameraState, requestCamera } = useCameraStream(workerRef);
-  const offscreenTransferredRef = useRef(false);
 
   // OCRリクエスト多重送信防止フラグ
   const isOcrPendingRef = useRef(false);
@@ -108,50 +107,11 @@ export default function CameraView() {
     isOcrPendingRef.current = false;
   }, []);
 
-  // Workerを起動してキャプチャを開始する
+  // キャプチャを開始する（メインスレッドで実行、OffscreenCanvas分離は将来フェーズ）
+  // transferControlToOffscreen後はcanvasのwidthが0になり映像が取れないため
+  // 現時点はcanvas.toDataURLベースのメインスレッドキャプチャに統一する
   const startWorkerCapture = useCallback((canvas: HTMLCanvasElement) => {
-    if (typeof OffscreenCanvas === "undefined") {
-      // OffscreenCanvas未サポート環境（iOS 16未満等）ではメインスレッドフォールバックを使う
-      startMainThreadCapture(canvas, handleFrame);
-      return;
-    }
-
-    // OffscreenCanvasをWorkerに渡す（transferControlToOffscreen後はメインスレッドから操作不可）
-    if (!offscreenTransferredRef.current) {
-      const offscreen = canvas.transferControlToOffscreen();
-      offscreenTransferredRef.current = true;
-
-      const worker = new Worker(
-        new URL("../../workers/frameCapture.worker.ts", import.meta.url)
-      );
-      workerRef.current = worker;
-
-      worker.postMessage({ type: "INIT_CANVAS", canvas: offscreen }, [offscreen]);
-
-      worker.onmessage = (e: MessageEvent<WorkerOutMessage>) => {
-        const msg = e.data;
-        if (msg.type === "FRAME") {
-          // 多重送信防止: 前のリクエストが完了するまで次フレームをスキップ
-          if (!isOcrPendingRef.current) {
-            handleFrame(msg.imageBase64).catch(() => {
-              isOcrPendingRef.current = false;
-            });
-          }
-        } else if (msg.type === "ERROR") {
-          if (msg.message.includes("OffscreenCanvas is not supported")) {
-            // OffscreenCanvas未サポートエラーをWorkerから受け取ったらフォールバックへ
-            worker.terminate();
-            workerRef.current = null;
-            startMainThreadCapture(canvas, handleFrame);
-          }
-          // その他のエラーはログに留め、次フレームで再試行
-          console.error("[Worker] Error:", msg.message);
-        }
-      };
-
-      const startMsg: WorkerInMessage = { type: "START", intervalMs: 500 };
-      worker.postMessage(startMsg);
-    }
+    startMainThreadCapture(canvas, handleFrame);
   }, [handleFrame]);
 
   // OffscreenCanvas用のcanvasを動画ソースとして描画する別のcanvasが必要
@@ -201,11 +161,6 @@ export default function CameraView() {
         clearInterval(drawIntervalRef.current);
         drawIntervalRef.current = null;
       }
-      if (workerRef.current) {
-        workerRef.current.terminate();
-        workerRef.current = null;
-      }
-      offscreenTransferredRef.current = false;
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cameraState.status]);
