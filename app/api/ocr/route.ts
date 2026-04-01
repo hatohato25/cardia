@@ -93,6 +93,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   try {
     const ocrText = await detectText(image);
+    // デバッグ: OCRテキストの内容を確認する（確認後に削除する）
+    console.log("[/api/ocr] OCR text:", JSON.stringify(ocrText));
     const cardInfo = extractCardInfo(ocrText);
 
     const response: OcrResponse = {
