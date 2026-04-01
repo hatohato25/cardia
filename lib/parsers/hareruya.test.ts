@@ -1,73 +1,129 @@
-import { parseHareruyaHtml, fetchHareruyaPrice } from "./hareruya";
+import { fetchHareruyaPrice, parseHareruyaApiResponseForTest } from "./hareruya";
 
-// 実際のHareruyaのHTMLスニペットを模したテスト用HTML
-// NOTE: 実際のHTML構造が変わった場合はセレクタとともにこのテストも更新する
+// fetchHareruyaPrice のURLパラメータ構築とHTTPエラー処理をテストする
+// parseHareruyaApiResponseForTest のレスポンス解析ロジックをテストする
 
-const MOCK_HTML_WITH_PRICE = `
-<!DOCTYPE html>
-<html lang="ja">
-<body>
-  <div class="product-list">
-    <div class="product-list__item">
-      <h3 class="product-list__name">Lightning Bolt</h3>
-      <div class="product-list__price">¥1,200</div>
-      <div class="product-list__stock">在庫あり</div>
-    </div>
-    <div class="product-list__item">
-      <h3 class="product-list__name">Lightning Bolt (Foil)</h3>
-      <div class="product-list__price">¥3,500</div>
-      <div class="product-list__stock">在庫あり</div>
-    </div>
-  </div>
-</body>
-</html>
-`;
+const MOCK_API_RESPONSE_WITH_PRICE = {
+  responseHeader: { status: 0, QTime: "3", reqID: "test" },
+  response: {
+    numFound: 3,
+    page: 1,
+    docs: [
+      {
+        product: "112977",
+        product_name: "(401)《稲妻/Lightning Bolt》[CLB-BF] 赤C",
+        product_name_en: "Lightning Bolt [CLB-BF]",
+        card_name: "Lightning Bolt",
+        language: "1",
+        price: "100",
+        foil_flg: "0",
+        stock: "504",
+        card_condition: "1",
+        sale_flg: "0",
+      },
+      {
+        product: "112739",
+        product_name: "(187)《稲妻/Lightning Bolt》[CLB] 赤C",
+        product_name_en: "Lightning Bolt [CLB]",
+        card_name: "Lightning Bolt",
+        language: "1",
+        price: "200",
+        foil_flg: "0",
+        stock: "588",
+        card_condition: "1",
+        sale_flg: "0",
+      },
+    ],
+  },
+};
 
-const MOCK_HTML_NO_RESULT = `
-<!DOCTYPE html>
-<html lang="ja">
-<body>
-  <div class="search-no-result">
-    <p>検索結果が見つかりませんでした</p>
-  </div>
-</body>
-</html>
-`;
+const MOCK_API_RESPONSE_NO_RESULT = {
+  responseHeader: { status: 0, QTime: "2", reqID: "test" },
+  response: {
+    numFound: 0,
+    page: 1,
+    docs: [],
+  },
+};
 
-const MOCK_HTML_NO_PRICE = `
-<!DOCTYPE html>
-<html lang="ja">
-<body>
-  <div class="product-list">
-    <div class="product-list__item">
-      <h3 class="product-list__name">Some Card</h3>
-    </div>
-  </div>
-</body>
-</html>
-`;
+const MOCK_API_RESPONSE_OUT_OF_STOCK_ONLY = {
+  responseHeader: { status: 0, QTime: "2", reqID: "test" },
+  response: {
+    numFound: 1,
+    page: 1,
+    docs: [
+      {
+        product: "999",
+        product_name: "《Force of Will》[ALL]",
+        product_name_en: "Force of Will [ALL]",
+        card_name: "Force of Will",
+        language: "2",
+        price: "15000",
+        foil_flg: "0",
+        stock: "0",
+        card_condition: "1",
+        sale_flg: "0",
+      },
+    ],
+  },
+};
 
-const MOCK_HTML_EMPTY = `
-<!DOCTYPE html>
-<html lang="ja">
-<body>
-  <div class="main-content">
-    <p>コンテンツなし</p>
-  </div>
-</body>
-</html>
-`;
+const MOCK_API_RESPONSE_FOIL_AND_NORMAL = {
+  responseHeader: { status: 0, QTime: "2", reqID: "test" },
+  response: {
+    numFound: 2,
+    page: 1,
+    docs: [
+      {
+        product: "100",
+        product_name: "【Foil】《Lightning Bolt》[M11]",
+        product_name_en: "Lightning Bolt [M11] Foil",
+        card_name: "Lightning Bolt",
+        language: "2",
+        price: "500",
+        foil_flg: "1",
+        stock: "3",
+        card_condition: "1",
+        sale_flg: "0",
+      },
+      {
+        product: "101",
+        product_name: "《Lightning Bolt》[M11]",
+        product_name_en: "Lightning Bolt [M11]",
+        card_name: "Lightning Bolt",
+        language: "2",
+        price: "200",
+        foil_flg: "0",
+        stock: "5",
+        card_condition: "1",
+        sale_flg: "0",
+      },
+    ],
+  },
+};
+
+const MOCK_API_RESPONSE_API_ERROR = {
+  responseHeader: {
+    status: 101,
+    errorMessage: "invalid sort condition: default",
+    QTime: "1",
+    reqID: "test",
+  },
+  response: {
+    numFound: 0,
+    page: 1,
+    docs: [],
+  },
+};
 
 describe("fetchHareruyaPrice", () => {
-  // fetch をモックしてURLパラメータの構築ロジックを検証する
-  // 実際のHTTP通信は行わない
   const mockFetch = jest.fn();
 
   beforeEach(() => {
     global.fetch = mockFetch;
     mockFetch.mockResolvedValue({
       ok: true,
-      text: async () => MOCK_HTML_WITH_PRICE,
+      json: async () => MOCK_API_RESPONSE_WITH_PRICE,
     });
   });
 
@@ -77,42 +133,36 @@ describe("fetchHareruyaPrice", () => {
   });
 
   describe("URLパラメータの構築", () => {
-    it("suggest_type=all と sort=default を固定パラメータとして付与する", async () => {
+    it("fq.card_name と fq_category_id=1 と sort=price+asc を付与する", async () => {
       await fetchHareruyaPrice("Lightning Bolt", null, null);
 
       expect(mockFetch).toHaveBeenCalledTimes(1);
       const calledUrl = new URL(mockFetch.mock.calls[0][0] as string);
-      expect(calledUrl.searchParams.get("suggest_type")).toBe("all");
-      expect(calledUrl.searchParams.get("sort")).toBe("default");
+      expect(calledUrl.searchParams.get("fq.card_name")).toBe("Lightning Bolt");
+      expect(calledUrl.searchParams.get("fq_category_id")).toBe("1");
+      // sort パラメータは "price asc" が URL エンコードされて渡る
+      expect(calledUrl.searchParams.get("sort")).toBe("price asc");
     });
 
-    it("setCode なしの場合はカード名をそのまま product パラメータに渡す", async () => {
+    it("setCode がある場合は fq.cardset パラメータを付与する", async () => {
+      await fetchHareruyaPrice("Lightning Bolt", "M11", null);
+
+      const calledUrl = new URL(mockFetch.mock.calls[0][0] as string);
+      expect(calledUrl.searchParams.get("fq.cardset")).toBe("M11");
+    });
+
+    it("setCode がない場合は fq.cardset パラメータを付与しない", async () => {
       await fetchHareruyaPrice("Lightning Bolt", null, null);
 
       const calledUrl = new URL(mockFetch.mock.calls[0][0] as string);
-      expect(calledUrl.searchParams.get("product")).toBe("Lightning Bolt");
+      expect(calledUrl.searchParams.has("fq.cardset")).toBe(false);
     });
 
-    it("setCode のみある場合は 'cardName [setCode]' 形式で product パラメータに渡す", async () => {
-      await fetchHareruyaPrice("Lightning Bolt", "M21", null);
+    it("collectorNumber がある場合は fq.collector_number パラメータを付与する", async () => {
+      await fetchHareruyaPrice("Lightning Bolt", "M11", "149");
 
       const calledUrl = new URL(mockFetch.mock.calls[0][0] as string);
-      expect(calledUrl.searchParams.get("product")).toBe("Lightning Bolt [M21]");
-    });
-
-    it("collectorNumber と setCode がある場合は '(番号)cardName [setCode]' 形式で product パラメータに渡す", async () => {
-      await fetchHareruyaPrice("Lightning Bolt", "TMT", "086");
-
-      const calledUrl = new URL(mockFetch.mock.calls[0][0] as string);
-      // Hareruyaの商品タイトルが "(086)《...》[TMT]" 形式のため、同形式で絞り込む
-      expect(calledUrl.searchParams.get("product")).toBe("(086)Lightning Bolt [TMT]");
-    });
-
-    it("collectorNumber のみある場合は '(番号)cardName' 形式で product パラメータに渡す", async () => {
-      await fetchHareruyaPrice("Lightning Bolt", null, "123");
-
-      const calledUrl = new URL(mockFetch.mock.calls[0][0] as string);
-      expect(calledUrl.searchParams.get("product")).toBe("(123)Lightning Bolt");
+      expect(calledUrl.searchParams.get("fq.collector_number")).toBe("149");
     });
   });
 
@@ -152,41 +202,54 @@ describe("fetchHareruyaPrice", () => {
   });
 });
 
-describe("parseHareruyaHtml", () => {
+describe("parseHareruyaApiResponseForTest", () => {
   describe("正常系: 価格取得成功", () => {
-    it("最初の商品の価格とカード名を返す", () => {
-      const result = parseHareruyaHtml(MOCK_HTML_WITH_PRICE);
+    it("最安値の非Foil在庫ありカードの価格を返す", () => {
+      const result = parseHareruyaApiResponseForTest(
+        MOCK_API_RESPONSE_WITH_PRICE,
+        "Lightning Bolt"
+      );
 
       expect(result.found).toBe(true);
       if (result.found) {
         expect(result.cardName).toBe("Lightning Bolt");
-        expect(result.price).toBe(1200);
+        expect(result.price).toBe(100);
         expect(result.currency).toBe("JPY");
       }
     });
 
-    it("カンマ区切りの価格を正しくパースできる", () => {
-      const html = `
-        <div class="product-list">
-          <div class="product-list__item">
-            <h3 class="product-list__name">Force of Will</h3>
-            <div class="product-list__price">¥8,500</div>
-          </div>
-        </div>
-      `;
-
-      const result = parseHareruyaHtml(html);
+    it("Foilより通常版を優先する", () => {
+      const result = parseHareruyaApiResponseForTest(
+        MOCK_API_RESPONSE_FOIL_AND_NORMAL,
+        "Lightning Bolt"
+      );
 
       expect(result.found).toBe(true);
       if (result.found) {
-        expect(result.price).toBe(8500);
+        // 通常版（foil_flg=0）の価格200が選ばれる（Foil版500より安くても通常版優先）
+        expect(result.price).toBe(200);
+      }
+    });
+
+    it("在庫なしのみの場合は在庫なしカードの価格を返す", () => {
+      const result = parseHareruyaApiResponseForTest(
+        MOCK_API_RESPONSE_OUT_OF_STOCK_ONLY,
+        "Force of Will"
+      );
+
+      expect(result.found).toBe(true);
+      if (result.found) {
+        expect(result.price).toBe(15000);
       }
     });
   });
 
   describe("異常系: 価格未発見・パースエラー", () => {
-    it("検索結果なし要素がある場合はnot_foundを返す", () => {
-      const result = parseHareruyaHtml(MOCK_HTML_NO_RESULT);
+    it("検索結果なし（numFound=0）の場合は not_found を返す", () => {
+      const result = parseHareruyaApiResponseForTest(
+        MOCK_API_RESPONSE_NO_RESULT,
+        "Unknown Card"
+      );
 
       expect(result.found).toBe(false);
       if (!result.found) {
@@ -194,28 +257,16 @@ describe("parseHareruyaHtml", () => {
       }
     });
 
-    it("価格要素がない場合はparse_errorを返す", () => {
-      const result = parseHareruyaHtml(MOCK_HTML_NO_PRICE);
+    it("API エラーステータスの場合は parse_error を返す", () => {
+      const result = parseHareruyaApiResponseForTest(
+        MOCK_API_RESPONSE_API_ERROR,
+        "Lightning Bolt"
+      );
 
       expect(result.found).toBe(false);
       if (!result.found) {
         expect(result.reason).toBe("parse_error");
       }
-    });
-
-    it("商品リスト要素が存在しない場合はparse_errorを返す", () => {
-      const result = parseHareruyaHtml(MOCK_HTML_EMPTY);
-
-      expect(result.found).toBe(false);
-      if (!result.found) {
-        expect(result.reason).toBe("parse_error");
-      }
-    });
-
-    it("空のHTMLでもエラーをスローしない", () => {
-      expect(() => parseHareruyaHtml("")).not.toThrow();
-      const result = parseHareruyaHtml("");
-      expect(result.found).toBe(false);
     });
   });
 });
