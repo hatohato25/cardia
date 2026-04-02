@@ -60,12 +60,8 @@ export async function fetchHareruyaPrice(
     rows: "20",
   });
 
-  // セット略号がある場合は絞り込みに使う
-  if (setCode !== null) {
-    params.set("fq.cardset", setCode);
-  }
-
-  // collectorNumberはAPIパラメータでは絞り込めないため、レスポンスのフィルタリングで使用する
+  // fq.cardset はHareruya APIで機能しないため使用しない
+  // setCode・collectorNumber はレスポンスの product_name でフィルタリングする
 
   const url = `${HARERUYA_API_URL}?${params.toString()}`;
 
@@ -93,7 +89,7 @@ export async function fetchHareruyaPrice(
     }
 
     const data = (await res.json()) as HareruyaApiResponse;
-    return parseHareruyaApiResponse(data, cardName, collectorNumber);
+    return parseHareruyaApiResponse(data, cardName, collectorNumber, setCode);
   } catch (err) {
     if (err instanceof Error && err.name === "AbortError") {
       // タイムアウトエラーは呼び出し元で適切に処理するために再スロー
@@ -110,11 +106,12 @@ export async function fetchHareruyaPrice(
 }
 
 // HareruyaのJSON APIレスポンスから価格情報を抽出する
-// collectorNumber: OCRで取得したコレクター番号（例: "010"）。通常版カードの絞り込みに使用
+// setCode・collectorNumber: APIパラメータでは機能しないためレスポンスのproduct_nameでフィルタリングする
 function parseHareruyaApiResponse(
   data: HareruyaApiResponse,
   requestedCardName: string,
-  collectorNumber: string | null
+  collectorNumber: string | null,
+  setCode: string | null = null
 ): HareruyaParseResult {
   if (data.responseHeader.status !== 0) {
     console.warn("[hareruya] API error status", {
@@ -133,17 +130,25 @@ function parseHareruyaApiResponse(
   const normalCards = data.response.docs.filter((doc) =>
     doc.product_name.includes("《")
   );
-  const docsToSearch = normalCards.length > 0 ? normalCards : data.response.docs;
+  let filteredDocs = normalCards.length > 0 ? normalCards : data.response.docs;
+
+  // セット略号がある場合は product_name の "[SET]" パターンで絞り込む
+  // fq.cardset APIパラメータは機能しないためレスポンス側でフィルタリングする
+  if (setCode !== null) {
+    const setFiltered = filteredDocs.filter((doc) =>
+      doc.product_name.includes(`[${setCode}]`)
+    );
+    if (setFiltered.length > 0) filteredDocs = setFiltered;
+  }
 
   // コレクター番号がある場合はproduct_nameの "(NNN)" パターンで絞り込む
   // 例: collectorNumber="010" → "(010)" を含む商品に絞る
-  const collectorFiltered =
-    collectorNumber !== null
-      ? docsToSearch.filter((doc) =>
-          doc.product_name.includes(`(${collectorNumber})`)
-        )
-      : docsToSearch;
-  const filteredDocs = collectorFiltered.length > 0 ? collectorFiltered : docsToSearch;
+  if (collectorNumber !== null) {
+    const collectorFiltered = filteredDocs.filter((doc) =>
+      doc.product_name.includes(`(${collectorNumber})`)
+    );
+    if (collectorFiltered.length > 0) filteredDocs = collectorFiltered;
+  }
 
   // 在庫ありの通常版（非Foil）を優先して検索する
   // 在庫なしの場合は在庫なし含めて最安値を返す

@@ -144,15 +144,8 @@ describe("fetchHareruyaPrice", () => {
       expect(calledUrl.searchParams.get("sort")).toBe("price asc");
     });
 
-    it("setCode がある場合は fq.cardset パラメータを付与する", async () => {
+    it("setCode はURLパラメータに含まれない（レスポンスフィルタリングで使用）", async () => {
       await fetchHareruyaPrice("Lightning Bolt", "M11", null);
-
-      const calledUrl = new URL(mockFetch.mock.calls[0][0] as string);
-      expect(calledUrl.searchParams.get("fq.cardset")).toBe("M11");
-    });
-
-    it("setCode がない場合は fq.cardset パラメータを付与しない", async () => {
-      await fetchHareruyaPrice("Lightning Bolt", null, null);
 
       const calledUrl = new URL(mockFetch.mock.calls[0][0] as string);
       expect(calledUrl.searchParams.has("fq.cardset")).toBe(false);
