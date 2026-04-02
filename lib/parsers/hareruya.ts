@@ -95,6 +95,13 @@ export async function fetchHareruyaPrice(
     }
 
     const data = (await res.json()) as HareruyaApiResponse;
+    // デバッグ: APIレスポンスの内容を確認する（確認後に削除）
+    console.log("[hareruya] API response", JSON.stringify({
+      url,
+      numFound: data.response?.numFound,
+      docs: data.response?.docs?.slice(0, 2),
+      status: data.responseHeader?.status,
+    }));
     return parseHareruyaApiResponse(data, cardName);
   } catch (err) {
     if (err instanceof Error && err.name === "AbortError") {
