@@ -45,19 +45,21 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   // キャッシュミス → Hareruya からフェッチ
   try {
     const parseResult = await fetchHareruyaPrice(card, setCode, collectorNumber);
+    console.log("[/api/price] hareruya result", JSON.stringify(parseResult));
 
     const price = parseResult.found ? parseResult.price : null;
     const now = new Date().toISOString();
 
-    const cacheValue: CachedPrice = {
-      price,
-      currency: "JPY",
-      source: "hareruya",
-      cachedAt: now,
-    };
-
-    // Redis にキャッシュ保存（障害時はログのみでエラーをスローしない）
-    await setCachedPrice(cacheKey, cacheValue);
+    // price: null（未発見）はキャッシュしない（次回リクエストで再取得させる）
+    if (price !== null) {
+      const cacheValue: CachedPrice = {
+        price,
+        currency: "JPY",
+        source: "hareruya",
+        cachedAt: now,
+      };
+      await setCachedPrice(cacheKey, cacheValue);
+    }
 
     const response: PriceResponse = {
       price,
