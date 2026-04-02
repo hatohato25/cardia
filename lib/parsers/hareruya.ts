@@ -48,14 +48,16 @@ export async function fetchHareruyaPrice(
   collectorNumber: string | null
 ): Promise<HareruyaParseResult> {
   const params = new URLSearchParams({
-    // カード名での絞り込み（完全一致）
-    "fq.card_name": cardName,
+    // kwがHareruyaの実際のキーワード検索パラメータ（fq.card_nameは機能しない）
+    kw: cardName,
+    // 価格1円以上に絞り込む（0円の未設定商品を除外）
+    "fq.price": "1~*",
     // シングルカードカテゴリに限定
     fq_category_id: "1",
     // 価格昇順で最安値を先頭に
     sort: "price asc",
-    // 必要な件数は最安値1件のみ
-    rows: "10",
+    // アートカード含む全バリアントを取得してフィルタリング
+    rows: "20",
   });
 
   // セット略号がある場合は絞り込みに使う
@@ -63,11 +65,7 @@ export async function fetchHareruyaPrice(
     params.set("fq.cardset", setCode);
   }
 
-  // コレクター番号がある場合はproduct名に含まれるパターンで絞り込む
-  // ただし fq.card_name の方が優先度が高いため補助的に使用
-  if (collectorNumber !== null) {
-    params.set("fq.collector_number", collectorNumber);
-  }
+  // collectorNumberはAPIパラメータでは絞り込めないため、レスポンスのフィルタリングで使用する
 
   const url = `${HARERUYA_API_URL}?${params.toString()}`;
 
@@ -95,14 +93,7 @@ export async function fetchHareruyaPrice(
     }
 
     const data = (await res.json()) as HareruyaApiResponse;
-    // デバッグ: APIレスポンスの内容を確認する（確認後に削除）
-    console.log("[hareruya] API response", JSON.stringify({
-      url,
-      numFound: data.response?.numFound,
-      docs: data.response?.docs?.slice(0, 2),
-      status: data.responseHeader?.status,
-    }));
-    return parseHareruyaApiResponse(data, cardName);
+    return parseHareruyaApiResponse(data, cardName, collectorNumber);
   } catch (err) {
     if (err instanceof Error && err.name === "AbortError") {
       // タイムアウトエラーは呼び出し元で適切に処理するために再スロー
@@ -119,9 +110,11 @@ export async function fetchHareruyaPrice(
 }
 
 // HareruyaのJSON APIレスポンスから価格情報を抽出する
+// collectorNumber: OCRで取得したコレクター番号（例: "010"）。通常版カードの絞り込みに使用
 function parseHareruyaApiResponse(
   data: HareruyaApiResponse,
-  requestedCardName: string
+  requestedCardName: string,
+  collectorNumber: string | null
 ): HareruyaParseResult {
   if (data.responseHeader.status !== 0) {
     console.warn("[hareruya] API error status", {
@@ -135,18 +128,35 @@ function parseHareruyaApiResponse(
     return { found: false, reason: "not_found" };
   }
 
+  // アートカード・トークン等の非通常版を除外する
+  // 通常版カードのproduct_nameは《》形式のカード名を含む
+  const normalCards = data.response.docs.filter((doc) =>
+    doc.product_name.includes("《")
+  );
+  const docsToSearch = normalCards.length > 0 ? normalCards : data.response.docs;
+
+  // コレクター番号がある場合はproduct_nameの "(NNN)" パターンで絞り込む
+  // 例: collectorNumber="010" → "(010)" を含む商品に絞る
+  const collectorFiltered =
+    collectorNumber !== null
+      ? docsToSearch.filter((doc) =>
+          doc.product_name.includes(`(${collectorNumber})`)
+        )
+      : docsToSearch;
+  const filteredDocs = collectorFiltered.length > 0 ? collectorFiltered : docsToSearch;
+
   // 在庫ありの通常版（非Foil）を優先して検索する
   // 在庫なしの場合は在庫なし含めて最安値を返す
-  const inStockNonFoil = data.response.docs.filter(
+  const inStockNonFoil = filteredDocs.filter(
     (doc) => doc.stock !== "0" && doc.foil_flg === "0"
   );
-  const inStock = data.response.docs.filter((doc) => doc.stock !== "0");
+  const inStock = filteredDocs.filter((doc) => doc.stock !== "0");
   const candidates =
     inStockNonFoil.length > 0
       ? inStockNonFoil
       : inStock.length > 0
         ? inStock
-        : data.response.docs;
+        : filteredDocs;
 
   // 価格昇順ソート済みのためcandidates[0]が最安値
   const cheapest = candidates[0];
@@ -177,7 +187,8 @@ function parseHareruyaApiResponse(
 // テスト目的で内部パース関数をエクスポートする
 export function parseHareruyaApiResponseForTest(
   data: HareruyaApiResponse,
-  requestedCardName: string
+  requestedCardName: string,
+  collectorNumber: string | null = null
 ): HareruyaParseResult {
-  return parseHareruyaApiResponse(data, requestedCardName);
+  return parseHareruyaApiResponse(data, requestedCardName, collectorNumber);
 }

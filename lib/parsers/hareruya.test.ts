@@ -133,12 +133,12 @@ describe("fetchHareruyaPrice", () => {
   });
 
   describe("URLパラメータの構築", () => {
-    it("fq.card_name と fq_category_id=1 と sort=price+asc を付与する", async () => {
+    it("kw と fq_category_id=1 と sort=price+asc を付与する", async () => {
       await fetchHareruyaPrice("Lightning Bolt", null, null);
 
       expect(mockFetch).toHaveBeenCalledTimes(1);
       const calledUrl = new URL(mockFetch.mock.calls[0][0] as string);
-      expect(calledUrl.searchParams.get("fq.card_name")).toBe("Lightning Bolt");
+      expect(calledUrl.searchParams.get("kw")).toBe("Lightning Bolt");
       expect(calledUrl.searchParams.get("fq_category_id")).toBe("1");
       // sort パラメータは "price asc" が URL エンコードされて渡る
       expect(calledUrl.searchParams.get("sort")).toBe("price asc");
@@ -158,11 +158,11 @@ describe("fetchHareruyaPrice", () => {
       expect(calledUrl.searchParams.has("fq.cardset")).toBe(false);
     });
 
-    it("collectorNumber がある場合は fq.collector_number パラメータを付与する", async () => {
+    it("collectorNumber はURLパラメータに含まれない（レスポンスフィルタリングで使用）", async () => {
       await fetchHareruyaPrice("Lightning Bolt", "M11", "149");
 
       const calledUrl = new URL(mockFetch.mock.calls[0][0] as string);
-      expect(calledUrl.searchParams.get("fq.collector_number")).toBe("149");
+      expect(calledUrl.searchParams.has("fq.collector_number")).toBe(false);
     });
   });
 
