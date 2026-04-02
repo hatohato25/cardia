@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import type { PriceResponse } from "@/types";
 
 type PriceTagData = {
@@ -8,9 +8,20 @@ type PriceTagData = {
   priceResponse: PriceResponse;
 };
 
+type FetchStatus =
+  | "idle"
+  | "searching"
+  | "found"
+  | "not_found"
+  | "error";
+
 type GuideOverlayProps = {
   // 価格タグデータ（取得済みの場合のみ渡す）
   priceTagData: PriceTagData | null;
+  // 現在の取得状態（ヒントテキストの表示制御に使用）
+  fetchStatus: FetchStatus;
+  // ガイド枠タップ時のコールバック
+  onGuideAreaTap: () => void;
 };
 
 // MTGカードの比率: 63mm × 88mm ≈ 5:7
@@ -31,8 +42,13 @@ const TAG_STYLE = {
   LINE_HEIGHT: 28,
 } as const;
 
-export default function GuideOverlay({ priceTagData }: GuideOverlayProps) {
+// タップフラッシュのアニメーション時間（ms）
+const FLASH_DURATION_MS = 200;
+
+export default function GuideOverlay({ priceTagData, fetchStatus, onGuideAreaTap }: GuideOverlayProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  // タップ時にガイド枠を一瞬白くフラッシュさせるフラグ
+  const [isFlashing, setIsFlashing] = useState(false);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -51,6 +67,12 @@ export default function GuideOverlay({ priceTagData }: GuideOverlayProps) {
     const guideHeight = guideWidth / CARD_ASPECT_RATIO;
     const guideX = (width - guideWidth) / 2;
     const guideY = (height - guideHeight) / 2;
+
+    // タップフラッシュ中はガイド枠を白く塗りつぶす
+    if (isFlashing) {
+      ctx.fillStyle = "rgba(255, 255, 255, 0.35)";
+      ctx.fillRect(guideX, guideY, guideWidth, guideHeight);
+    }
 
     // ガイド枠の描画
     ctx.strokeStyle = "rgba(255, 255, 255, 0.8)";
@@ -94,7 +116,7 @@ export default function GuideOverlay({ priceTagData }: GuideOverlayProps) {
     if (priceTagData) {
       drawPriceTag(ctx, priceTagData, guideX, guideY, guideWidth, guideHeight);
     }
-  }, [priceTagData]);
+  }, [priceTagData, isFlashing]);
 
   const handleResize = () => {
     const canvas = canvasRef.current;
@@ -110,12 +132,68 @@ export default function GuideOverlay({ priceTagData }: GuideOverlayProps) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // ガイド枠タップ時の処理
+  // フラッシュアニメーションを発火させてからコールバックを呼ぶ
+  const handleTap = useCallback(() => {
+    setIsFlashing(true);
+    // FLASH_DURATION_MS後にフラッシュを解除する
+    setTimeout(() => {
+      setIsFlashing(false);
+    }, FLASH_DURATION_MS);
+    onGuideAreaTap();
+  }, [onGuideAreaTap]);
+
+  // ガイド枠の位置・サイズをCSSで再現してタップ領域を作る
+  // canvasはpointer-events-noneのためDOMの透明divでタップを受け取る
+  const guideAreaStyle: React.CSSProperties = {
+    position: "absolute",
+    left: `${((1 - GUIDE_WIDTH_RATIO) / 2) * 100}%`,
+    width: `${GUIDE_WIDTH_RATIO * 100}%`,
+    // 縦方向は中央揃え・アスペクト比でheightを算出
+    top: "50%",
+    transform: `translateY(-50%)`,
+    aspectRatio: `${CARD_ASPECT_RATIO}`,
+    cursor: "pointer",
+  };
+
+  // ヒントテキストはidle・found・not_found・errorのときに表示する
+  // searching中は「検索中...」スピナーが表示されているため非表示にする
+  const showHint = fetchStatus !== "searching";
+
   return (
-    <canvas
-      ref={canvasRef}
-      className="absolute inset-0 pointer-events-none"
-      style={{ width: "100%", height: "100%" }}
-    />
+    <>
+      {/* ガイド枠のcanvas描画（pointer-events-noneで操作を透過） */}
+      <canvas
+        ref={canvasRef}
+        className="absolute inset-0 pointer-events-none"
+        style={{ width: "100%", height: "100%" }}
+      />
+
+      {/* タップ検索領域: canvasの上に重ねた透明divでタップを受け取る */}
+      <div
+        style={guideAreaStyle}
+        onClick={handleTap}
+        onTouchEnd={(e) => {
+          // touchendでも発火させてモバイルのタップレスポンスを向上させる
+          // onClickと二重発火しないようにpreventDefaultは不要（onClickはtouchendの後に発火しない場合もある）
+          e.preventDefault();
+          handleTap();
+        }}
+        aria-label="タップしてカードを検索"
+        role="button"
+      >
+        {/* 「タップして検索」ヒントテキスト: ガイド枠の下部に表示 */}
+        {showHint && (
+          <div
+            className="absolute bottom-0 left-0 right-0 translate-y-full pt-2 flex justify-center pointer-events-none"
+          >
+            <span className="bg-black bg-opacity-60 text-white text-xs px-3 py-1 rounded-full">
+              タップして検索
+            </span>
+          </div>
+        )}
+      </div>
+    </>
   );
 }
 

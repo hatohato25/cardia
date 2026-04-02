@@ -17,6 +17,11 @@ type FetchStatus =
   | "not_found"
   | "error";
 
+// 静止検出の設定定数
+const STABILITY_THRESHOLD = 8;        // ピクセル差分の閾値（調整可能）
+const STABILITY_FRAMES = 5;           // 安定と判定するフレーム数
+const POST_SEARCH_COOLDOWN_MS = 3000; // 検索後のクールダウン
+
 export default function CameraView() {
   const workerRef = useRef<Worker | null>(null);
   const { videoRef, cameraState, requestCamera } = useCameraStream(workerRef);
@@ -29,11 +34,19 @@ export default function CameraView() {
   const ocrRetryCountRef = useRef(0);
   const MAX_OCR_RETRY = 3;
 
+  // フロントキャッシュ: カード名 → 価格タグデータのMap
+  const priceCache = useRef<Map<string, PriceTagData>>(new Map());
+
+  // 手動タップ時にOCRを即実行するためのトリガー関数をRefで保持
+  // startMainThreadCapture内のクロージャから参照するため
+  const manualTriggerRef = useRef<(() => void) | null>(null);
+
   const [fetchStatus, setFetchStatus] = useState<FetchStatus>("idle");
   const [priceTagData, setPriceTagData] = useState<PriceTagData | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
   // OCR→価格検索フローを実行する
+  // imageBase64: キャプチャした画像のBase64文字列
   const handleFrame = useCallback(async (imageBase64: string) => {
     // レート制限中はOCRをスキップ
     if (rateLimitedUntilRef.current !== null && Date.now() < rateLimitedUntilRef.current) {
@@ -91,12 +104,24 @@ export default function CameraView() {
 
     const { cardName, setCode, collectorNumber } = ocrResponse;
 
+    // フロントキャッシュにヒットすれば価格APIをスキップして即表示
+    const cached = priceCache.current.get(cardName);
+    if (cached) {
+      setPriceTagData(cached);
+      setFetchStatus(cached.priceResponse.price !== null ? "found" : "not_found");
+      setStatusMessage(null);
+      isOcrPendingRef.current = false;
+      return;
+    }
+
     // 価格検索APIを呼ぶ
     try {
       const priceResponse = await callPriceApi(cardName, setCode, collectorNumber);
 
       // キャッシュが12時間以上前の場合は警告フラグを立てる（GuideOverlayで判定）
-      setPriceTagData({ cardName, priceResponse });
+      const newPriceTagData: PriceTagData = { cardName, priceResponse };
+      priceCache.current.set(cardName, newPriceTagData);
+      setPriceTagData(newPriceTagData);
       setFetchStatus(priceResponse.price !== null ? "found" : "not_found");
       setStatusMessage(null);
     } catch {
@@ -111,7 +136,8 @@ export default function CameraView() {
   // transferControlToOffscreen後はcanvasのwidthが0になり映像が取れないため
   // 現時点はcanvas.toDataURLベースのメインスレッドキャプチャに統一する
   const startWorkerCapture = useCallback((canvas: HTMLCanvasElement) => {
-    startMainThreadCapture(canvas, handleFrame);
+    const trigger = startMainThreadCapture(canvas, handleFrame);
+    manualTriggerRef.current = trigger;
   }, [handleFrame]);
 
   // OffscreenCanvas用のcanvasを動画ソースとして描画する別のcanvasが必要
@@ -170,6 +196,13 @@ export default function CameraView() {
     requestCamera();
   }, [requestCamera]);
 
+  // ガイド枠タップ時にOCRを即実行する
+  const handleGuideAreaTap = useCallback(() => {
+    if (manualTriggerRef.current) {
+      manualTriggerRef.current();
+    }
+  }, []);
+
   if (cameraState.status === "error") {
     return (
       <div className="flex items-center justify-center w-full h-full">
@@ -210,7 +243,11 @@ export default function CameraView() {
 
       {/* OCRガイド枠と価格タグのオーバーレイ */}
       <div className="absolute inset-0">
-        <GuideOverlay priceTagData={priceTagData} />
+        <GuideOverlay
+          priceTagData={priceTagData}
+          fetchStatus={fetchStatus}
+          onGuideAreaTap={handleGuideAreaTap}
+        />
       </div>
 
       {/* 検索中スピナー（DOM オーバーレイ、Canvas外） */}
@@ -239,32 +276,121 @@ export default function CameraView() {
 }
 
 // メインスレッドフォールバック: OffscreenCanvas未サポート時のキャプチャ実装
+// 静止検出を組み込み、フレームが安定したときのみOCRリクエストを送信する
+// 戻り値はmanualTrigger関数（タップ時に即ORC実行するため）
 let mainThreadIntervalId: ReturnType<typeof setInterval> | null = null;
 
 function startMainThreadCapture(
   canvas: HTMLCanvasElement,
   onFrame: (imageBase64: string) => Promise<void>
-): void {
+): () => void {
   if (mainThreadIntervalId !== null) {
     clearInterval(mainThreadIntervalId);
   }
 
   let isPending = false;
+  // 検索後のクールダウンタイム（静止検出を一時停止する期限）
+  let cooldownUntil = 0;
+  // 直近フレームの差分履歴（STABILITY_FRAMES本分保持）
+  const diffHistory: number[] = [];
+  // 前フレームのImageData（静止検出の比較対象）
+  let prevImageData: ImageData | null = null;
+  // 静止検出をスキップして即OCRを実行するフラグ
+  let manualTriggerPending = false;
+
+  // 差分計算用の小さいcanvas（負荷削減のため64x64にリサイズして比較）
+  const diffCanvas = document.createElement("canvas");
+  diffCanvas.width = 64;
+  diffCanvas.height = 64;
+  const diffCtx = diffCanvas.getContext("2d");
+
+  // 現在のcanvasフレームをリサイズしてImageDataを取得するヘルパー
+  const getResizedImageData = (): ImageData | null => {
+    if (!diffCtx) return null;
+    diffCtx.drawImage(canvas, 0, 0, 64, 64);
+    return diffCtx.getImageData(0, 0, 64, 64);
+  };
 
   mainThreadIntervalId = setInterval(() => {
     if (isPending) return;
-
-    // JPEG品質0.8でキャプチャ（FR-2-4の要件）
+    // 空フレームはスキップ（カメラ未起動時など）
     const imageBase64 = canvas.toDataURL("image/jpeg", 0.8);
-    if (imageBase64 === "data:,") return; // 空フレームをスキップ
+    if (imageBase64 === "data:,") return;
 
-    isPending = true;
-    onFrame(imageBase64)
-      .catch(() => {})
-      .finally(() => {
-        isPending = false;
-      });
+    const now = Date.now();
+
+    // 手動タップトリガーが発火していれば静止検出をバイパスしてすぐOCRを実行
+    if (manualTriggerPending) {
+      manualTriggerPending = false;
+      // タップ後はクールダウンを設定して次の静止検出まで待機させる
+      cooldownUntil = now + POST_SEARCH_COOLDOWN_MS;
+      prevImageData = null;
+      diffHistory.length = 0;
+
+      isPending = true;
+      onFrame(imageBase64)
+        .catch(() => {})
+        .finally(() => {
+          isPending = false;
+        });
+      return;
+    }
+
+    // クールダウン中は静止検出をスキップ
+    if (now < cooldownUntil) {
+      return;
+    }
+
+    // フレーム差分を計算して安定性を判定する
+    const curr = getResizedImageData();
+    if (curr && prevImageData) {
+      const diff = calcFrameDiff(prevImageData, curr);
+      diffHistory.push(diff);
+      // 直近STABILITY_FRAMES本分のみ保持
+      if (diffHistory.length > STABILITY_FRAMES) {
+        diffHistory.shift();
+      }
+
+      // STABILITY_FRAMES本すべての差分が閾値以下なら「安定」と判定してOCRを実行
+      if (
+        diffHistory.length === STABILITY_FRAMES &&
+        diffHistory.every((d) => d <= STABILITY_THRESHOLD)
+      ) {
+        // 安定検出後はクールダウンを設定して連続送信を防ぐ
+        cooldownUntil = now + POST_SEARCH_COOLDOWN_MS;
+        prevImageData = null;
+        diffHistory.length = 0;
+
+        isPending = true;
+        onFrame(imageBase64)
+          .catch(() => {})
+          .finally(() => {
+            isPending = false;
+          });
+        return;
+      }
+    }
+
+    prevImageData = curr;
   }, 500);
+
+  // 手動タップ用トリガー関数を返す
+  // 呼び出し側はこれをRefに保持してタップイベントで呼び出す
+  return () => {
+    manualTriggerPending = true;
+  };
+}
+
+// canvas から ImageData を取得して前フレームとの平均ピクセル差を計算する
+// 負荷を下げるためにcanvasを小さくリサイズしてから比較する（64x64程度）
+function calcFrameDiff(prev: ImageData, curr: ImageData): number {
+  let sum = 0;
+  for (let i = 0; i < prev.data.length; i += 4) {
+    sum += Math.abs(prev.data[i] - curr.data[i]);     // R
+    sum += Math.abs(prev.data[i+1] - curr.data[i+1]); // G
+    sum += Math.abs(prev.data[i+2] - curr.data[i+2]); // B
+  }
+  return sum / (prev.data.length / 4);
 }
 
 async function callOcrApi(imageBase64: string): Promise<OcrResponse> {
