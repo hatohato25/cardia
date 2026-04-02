@@ -1,19 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
-import type { PriceResponse } from "@/types";
-
-type PriceTagData = {
-  cardName: string;
-  priceResponse: PriceResponse;
-};
-
-type FetchStatus =
-  | "idle"
-  | "searching"
-  | "found"
-  | "not_found"
-  | "error";
+import type { FetchStatus, PriceTagData } from "@/types";
 
 type GuideOverlayProps = {
   // 価格タグデータ（取得済みの場合のみ渡す）
@@ -174,8 +162,9 @@ export default function GuideOverlay({ priceTagData, fetchStatus, onGuideAreaTap
         style={guideAreaStyle}
         onClick={handleTap}
         onTouchEnd={(e) => {
-          // touchendでも発火させてモバイルのタップレスポンスを向上させる
-          // onClickと二重発火しないようにpreventDefaultは不要（onClickはtouchendの後に発火しない場合もある）
+          // touchendで即handleTapを呼びモバイルのタップレスポンスを向上させる
+          // preventDefault()でtouchendに続くclickイベントを抑制し二重発火を防ぐ
+          // iOS Safariではダブルタップズームも抑制できる
           e.preventDefault();
           handleTap();
         }}

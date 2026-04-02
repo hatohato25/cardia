@@ -1,21 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
-import type { OcrResponse, PriceResponse } from "@/types";
+import type { OcrResponse, PriceResponse, FetchStatus, PriceTagData } from "@/types";
 import { useCameraStream } from "./useCameraStream";
 import GuideOverlay from "./GuideOverlay";
-
-type PriceTagData = {
-  cardName: string;
-  priceResponse: PriceResponse;
-};
-
-type FetchStatus =
-  | "idle"
-  | "searching"
-  | "found"
-  | "not_found"
-  | "error";
 
 // 静止検出の設定定数
 const STABILITY_THRESHOLD = 8;        // ピクセル差分の閾値（調整可能）
@@ -40,6 +28,8 @@ export default function CameraView() {
   // 手動タップ時にOCRを即実行するためのトリガー関数をRefで保持
   // startMainThreadCapture内のクロージャから参照するため
   const manualTriggerRef = useRef<(() => void) | null>(null);
+  // startMainThreadCaptureのインターバルを停止するクリーンアップ関数をRefで保持
+  const captureCleanupRef = useRef<(() => void) | null>(null);
 
   const [fetchStatus, setFetchStatus] = useState<FetchStatus>("idle");
   const [priceTagData, setPriceTagData] = useState<PriceTagData | null>(null);
@@ -137,8 +127,9 @@ export default function CameraView() {
   // transferControlToOffscreen後はcanvasのwidthが0になり映像が取れないため
   // 現時点はcanvas.toDataURLベースのメインスレッドキャプチャに統一する
   const startWorkerCapture = useCallback((canvas: HTMLCanvasElement) => {
-    const trigger = startMainThreadCapture(canvas, handleFrame);
+    const { trigger, cleanup } = startMainThreadCapture(canvas, handleFrame);
     manualTriggerRef.current = trigger;
+    captureCleanupRef.current = cleanup;
   }, [handleFrame]);
 
   // OffscreenCanvas用のcanvasを動画ソースとして描画する別のcanvasが必要
@@ -187,6 +178,11 @@ export default function CameraView() {
       if (drawIntervalRef.current) {
         clearInterval(drawIntervalRef.current);
         drawIntervalRef.current = null;
+      }
+      // メインスレッドキャプチャのインターバルも停止する
+      if (captureCleanupRef.current) {
+        captureCleanupRef.current();
+        captureCleanupRef.current = null;
       }
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -278,16 +274,17 @@ export default function CameraView() {
 
 // メインスレッドフォールバック: OffscreenCanvas未サポート時のキャプチャ実装
 // 静止検出を組み込み、フレームが安定したときのみOCRリクエストを送信する
-// 戻り値はmanualTrigger関数（タップ時に即ORC実行するため）
-let mainThreadIntervalId: ReturnType<typeof setInterval> | null = null;
+// 戻り値は { trigger: 手動OCRトリガー, cleanup: インターバル停止 } のオブジェクト
+type MainThreadCaptureHandle = {
+  trigger: () => void;
+  cleanup: () => void;
+};
 
 function startMainThreadCapture(
   canvas: HTMLCanvasElement,
   onFrame: (imageBase64: string) => Promise<void>
-): () => void {
-  if (mainThreadIntervalId !== null) {
-    clearInterval(mainThreadIntervalId);
-  }
+): MainThreadCaptureHandle {
+  let intervalId: ReturnType<typeof setInterval> | null = null;
 
   let isPending = false;
   // 検索後のクールダウンタイム（静止検出を一時停止する期限）
@@ -312,7 +309,7 @@ function startMainThreadCapture(
     return diffCtx.getImageData(0, 0, 64, 64);
   };
 
-  mainThreadIntervalId = setInterval(() => {
+  intervalId = setInterval(() => {
     if (isPending) return;
     // 空フレームはスキップ（カメラ未起動時など）
     const imageBase64 = canvas.toDataURL("image/jpeg", 0.8);
@@ -375,10 +372,18 @@ function startMainThreadCapture(
     prevImageData = curr;
   }, 500);
 
-  // 手動タップ用トリガー関数を返す
-  // 呼び出し側はこれをRefに保持してタップイベントで呼び出す
-  return () => {
-    manualTriggerPending = true;
+  return {
+    // manualTriggerRefに保持してタップイベントで呼び出す手動OCRトリガー
+    trigger: () => {
+      manualTriggerPending = true;
+    },
+    // コンポーネントのアンマウント時やカメラ停止時にインターバルを停止するクリーンアップ
+    cleanup: () => {
+      if (intervalId !== null) {
+        clearInterval(intervalId);
+        intervalId = null;
+      }
+    },
   };
 }
 

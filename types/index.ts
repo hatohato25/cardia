@@ -67,3 +67,17 @@ export type WorkerInMessage =
 export type WorkerOutMessage =
   | { type: "FRAME"; imageBase64: string }
   | { type: "ERROR"; message: string };
+
+// 価格取得の状態型
+export type FetchStatus =
+  | "idle"
+  | "searching"
+  | "found"
+  | "not_found"
+  | "error";
+
+// 価格タグに表示するデータ（カード名と価格レスポンスのペア）
+export type PriceTagData = {
+  cardName: string;
+  priceResponse: PriceResponse;
+};
