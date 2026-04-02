@@ -98,4 +98,57 @@ MH2 · 237`;
       expect(result!.collectorNumber).toBe("237");
     });
   });
+
+  describe("日本語版カードのOCRパターン", () => {
+    // 実際のOCRで取得できるテキストを使ったテスト
+    // 構造: 1行目=ふりがな, 2行目=カード名, 3行目=マナコスト, 4行目=カードタイプ, ...
+    // 下部: "M0010" 形式のコレクター番号, "TLA JP ..." 形式のセット情報
+    const ACTUAL_OCR_TEXT = `ふどう しゅごしゃ
+不動の守護者、アッパ
+②
+伝説のクリーチャー-バイソン・同盟者
+瞬速
+飛行
+これが戦場に出たとき、 あなたがコントロールしていて土
+地でもこれでもない望む数のパーマネントを対象とする。
+それらに気の技を行う。 それらを追放する。 追放されている問
+それらのオーナーはそれらのマナ・コストではなく2で唱えてもよ
+い。)
+あなたが追放領域から呪文1つを唱えるたび、 白の1/1の
+同盟者・クリーチャー・トークン1体を生成する。
+M0010
+TLA JP MAEL OLLIVIER-HENRY
+3/4
+02025 Viacom.
+I&2025 Wizards of the Coast`;
+
+    it("ふりがな行をスキップして漢字カード名を抽出できる", () => {
+      const result = extractCardInfo(ACTUAL_OCR_TEXT);
+
+      expect(result).not.toBeNull();
+      expect(result!.cardName).toBe("不動の守護者、アッパ");
+    });
+
+    it("M0010 から collectorNumber を 3桁ゼロ埋めで抽出できる", () => {
+      const result = extractCardInfo(ACTUAL_OCR_TEXT);
+
+      expect(result).not.toBeNull();
+      // "M0010" → 数値10 → 3桁ゼロ埋め "010"
+      expect(result!.collectorNumber).toBe("010");
+    });
+
+    it("TLA JP ... から setCode TLA を抽出できる", () => {
+      const result = extractCardInfo(ACTUAL_OCR_TEXT);
+
+      expect(result).not.toBeNull();
+      expect(result!.setCode).toBe("TLA");
+    });
+
+    it("カードタイプ行（伝説のクリーチャー）をカード名として抽出しない", () => {
+      const result = extractCardInfo(ACTUAL_OCR_TEXT);
+
+      expect(result).not.toBeNull();
+      expect(result!.cardName).not.toMatch(/^伝説の/);
+    });
+  });
 });
