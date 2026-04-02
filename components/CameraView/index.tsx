@@ -105,10 +105,11 @@ export default function CameraView() {
     const { cardName, setCode, collectorNumber } = ocrResponse;
 
     // フロントキャッシュにヒットすれば価格APIをスキップして即表示
+    // ただし price: null のキャッシュはスキップして再取得する（価格未発見は再試行させる）
     const cached = priceCache.current.get(cardName);
-    if (cached) {
+    if (cached && cached.priceResponse.price !== null) {
       setPriceTagData(cached);
-      setFetchStatus(cached.priceResponse.price !== null ? "found" : "not_found");
+      setFetchStatus("found");
       setStatusMessage(null);
       isOcrPendingRef.current = false;
       return;
