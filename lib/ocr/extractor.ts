@@ -150,7 +150,23 @@ function extractCardName(lines: string[]): string | null {
     );
     if (isCardTypeLine) continue;
 
-    return line;
+    // OCRノイズで先頭に1桁の数字が日本語文字に付着した場合（例: "1ロケット団のニャーズ"）を除去する
+    // 進化段階の数字がカード名行に混入するケースで発生するため、日本語文字の前の1桁数字を削除する
+    const leadingDigitMatch = /^(\d)([\u3040-\u30FF\u4E00-\u9FFF])/.exec(line);
+    const cleanedLine = leadingDigitMatch ? line.slice(1) : line;
+
+    // OCRノイズで末尾に " x 210円" や " × 150ダメージ" のようなダメージ行が混入した場合を除去する
+    // カード名行に別行のダメージ量テキストが結合されるケースで発生するため、" x/× 数字" 以降を削除する
+    const trailingNoiseMatch = /\s+[x×]\s*\d+[円点ダ]?.*$/.exec(cleanedLine);
+    if (trailingNoiseMatch) {
+      const trimmed = cleanedLine.slice(0, trailingNoiseMatch.index).trim();
+      // ゴミ除去後にカード名として意味のある文字列が残る場合のみ返す
+      if (trimmed.length > 1) {
+        return trimmed;
+      }
+    }
+
+    return cleanedLine;
   }
 
   return null;
@@ -176,11 +192,17 @@ function extractSetAndCollectorNumber(
 
   // 次にスペース区切りパターン（"WWK 31/145"）を行単位で試みる
   // 行全体がセット情報であることを確認するため各行に対して適用する
+  // "HP 260" のようなポケモンカードのHP行が誤マッチしないよう "HP" を除外する
+  // MTGに存在しない略号かつポケモン特有の表記（HP/EX/GX等）を非セット略号リストで除外する
+  const NON_SET_CODES = new Set(["HP", "EX", "GX", "AR", "SR", "SAR", "RR", "RRR", "PR", "CSR", "CHR", "UR", "ACE"]);
   for (const line of lines) {
     const spaceMatch = SET_COLLECTOR_PATTERN_SPACE.exec(line);
     if (spaceMatch) {
+      const matchedCode = spaceMatch[1] ?? null;
+      // ポケモンカード特有の非セット略号はスキップする（HP行等の誤検知防止）
+      if (matchedCode !== null && NON_SET_CODES.has(matchedCode)) continue;
       return {
-        setCode: spaceMatch[1] ?? null,
+        setCode: matchedCode,
         collectorNumber: spaceMatch[2] ?? null,
       };
     }
