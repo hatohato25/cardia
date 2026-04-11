@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
-import type { OcrResponse, PriceResponse, FetchStatus, PriceTagData } from "@/types";
+import type { OcrResponse, PriceResponse, FetchStatus, PriceTagData, ShopId } from "@/types";
 import { useCameraStream } from "./useCameraStream";
 import GuideOverlay from "./GuideOverlay";
 
@@ -10,7 +10,11 @@ const STABILITY_THRESHOLD = 8;        // ピクセル差分の閾値（調整可
 const STABILITY_FRAMES = 5;           // 安定と判定するフレーム数
 const POST_SEARCH_COOLDOWN_MS = 3000; // 検索後のクールダウン
 
-export default function CameraView() {
+type CameraViewProps = {
+  selectedShop: ShopId;
+};
+
+export default function CameraView({ selectedShop }: CameraViewProps) {
   const workerRef = useRef<Worker | null>(null);
   const { videoRef, cameraState, requestCamera } = useCameraStream(workerRef);
 
@@ -96,7 +100,9 @@ export default function CameraView() {
 
     // フロントキャッシュにヒットすれば価格APIをスキップして即表示
     // ただし price: null のキャッシュはスキップして再取得する（価格未発見は再試行させる）
-    const cached = priceCache.current.get(cardName);
+    // ショップをキーのプレフィックスに含めることでショップ切替後の混在を防ぐ
+    const cacheKey = `${selectedShop}:${cardName}`;
+    const cached = priceCache.current.get(cacheKey);
     if (cached && cached.priceResponse.price !== null) {
       setPriceTagData(cached);
       setFetchStatus("found");
@@ -107,11 +113,11 @@ export default function CameraView() {
 
     // 価格検索APIを呼ぶ
     try {
-      const priceResponse = await callPriceApi(cardName, setCode, collectorNumber);
+      const priceResponse = await callPriceApi(cardName, setCode, collectorNumber, selectedShop);
 
       // キャッシュが12時間以上前の場合は警告フラグを立てる（GuideOverlayで判定）
       const newPriceTagData: PriceTagData = { cardName, priceResponse };
-      priceCache.current.set(cardName, newPriceTagData);
+      priceCache.current.set(cacheKey, newPriceTagData);
       setPriceTagData(newPriceTagData);
       setFetchStatus(priceResponse.price !== null ? "found" : "not_found");
       setStatusMessage(null);
@@ -121,7 +127,7 @@ export default function CameraView() {
     }
 
     isOcrPendingRef.current = false;
-  }, []);
+  }, [selectedShop]);
 
   // キャプチャを開始する（メインスレッドで実行、OffscreenCanvas分離は将来フェーズ）
   // transferControlToOffscreen後はcanvasのwidthが0になり映像が取れないため
@@ -419,9 +425,10 @@ async function callOcrApi(imageBase64: string): Promise<OcrResponse> {
 async function callPriceApi(
   cardName: string,
   setCode: string | null,
-  collectorNumber: string | null
+  collectorNumber: string | null,
+  shop: ShopId
 ): Promise<PriceResponse> {
-  const params = new URLSearchParams({ card: cardName });
+  const params = new URLSearchParams({ card: cardName, shop });
   if (setCode) params.set("set", setCode);
   if (collectorNumber) params.set("num", collectorNumber);
 

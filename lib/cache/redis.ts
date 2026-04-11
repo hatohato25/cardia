@@ -1,5 +1,5 @@
 import { Redis } from "@upstash/redis";
-import type { CachedPrice } from "@/types";
+import type { CachedPrice, ShopId } from "@/types";
 
 // 24時間キャッシュ（Hareruya価格は日次更新のため、無料枠節約も兼ねる）
 export const CACHE_TTL_SEC = 60 * 60 * 24;
@@ -22,14 +22,16 @@ function getRedisClient(): Redis | null {
   return redisClient;
 }
 
-// キャッシュキー設計: "price:{cardName}:{setCode}:{collectorNumber}"
+// キャッシュキー設計: "price:{shop}:{cardName}:{setCode}:{collectorNumber}"
+// shop を含めることでショップ違いの同名カード価格が混在しないよう管理する
 // setCode / collectorNumber が null の場合は "_" でプレースホルダ
 export function buildCacheKey(
   cardName: string,
   setCode: string | null,
-  collectorNumber: string | null
+  collectorNumber: string | null,
+  shop: ShopId = "hareruya"
 ): string {
-  return `price:${cardName}:${setCode ?? "_"}:${collectorNumber ?? "_"}`;
+  return `price:${shop}:${cardName}:${setCode ?? "_"}:${collectorNumber ?? "_"}`;
 }
 
 // Redis障害時はnullを返してキャッシュをスキップする（NFR-4 デグレード許容）

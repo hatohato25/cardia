@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { buildCacheKey, getCachedPrice, setCachedPrice } from "@/lib/cache/redis";
 import { fetchHareruyaPrice } from "@/lib/parsers/hareruya";
-import type { PriceResponse, ApiError, CachedPrice } from "@/types";
+import { fetchHareruya2Price } from "@/lib/parsers/hareruya2";
+import type { PriceResponse, ApiError, CachedPrice, ShopId } from "@/types";
 
 function errorResponse(
   message: string,
@@ -18,6 +19,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   const card = searchParams.get("card");
   const setCode = searchParams.get("set");
   const collectorNumber = searchParams.get("num");
+  const shopParam = searchParams.get("shop") ?? "hareruya";
 
   // cardパラメータは必須
   if (!card || card.trim() === "") {
@@ -27,7 +29,16 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     );
   }
 
-  const cacheKey = buildCacheKey(card, setCode, collectorNumber);
+  // shopパラメータのバリデーション
+  if (shopParam !== "hareruya" && shopParam !== "hareruya2") {
+    return NextResponse.json<ApiError>(
+      { error: "shop パラメータは 'hareruya' または 'hareruya2' である必要があります", code: "INVALID_REQUEST" },
+      { status: 400 }
+    );
+  }
+  const shop: ShopId = shopParam;
+
+  const cacheKey = buildCacheKey(card, setCode, collectorNumber, shop);
 
   // Redis キャッシュを確認する（障害時は null が返ってキャッシュスキップ）
   const cachedValue = await getCachedPrice(cacheKey);
@@ -42,10 +53,14 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json<PriceResponse>(response);
   }
 
-  // キャッシュミス → Hareruya からフェッチ
+  // キャッシュミス → ショップ別にフェッチ
   try {
-    const parseResult = await fetchHareruyaPrice(card, setCode, collectorNumber);
-    console.log("[/api/price] hareruya result", JSON.stringify(parseResult));
+    const parseResult =
+      shop === "hareruya2"
+        ? await fetchHareruya2Price(card)
+        : await fetchHareruyaPrice(card, setCode, collectorNumber);
+
+    console.log(`[/api/price] ${shop} result`, JSON.stringify(parseResult));
 
     const price = parseResult.found ? parseResult.price : null;
     const now = new Date().toISOString();
@@ -55,7 +70,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       const cacheValue: CachedPrice = {
         price,
         currency: "JPY",
-        source: "hareruya",
+        source: shop,
         cachedAt: now,
       };
       await setCachedPrice(cacheKey, cacheValue);
@@ -64,7 +79,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     const response: PriceResponse = {
       price,
       currency: "JPY",
-      source: "hareruya",
+      source: shop,
       cached: false,
       cachedAt: now,
     };
@@ -73,14 +88,14 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   } catch (err) {
     // タイムアウトエラー（AbortError）
     if (err instanceof Error && err.name === "AbortError") {
-      console.error("[/api/price] Hareruya fetch timeout", { card, setCode });
+      console.error("[/api/price] fetch timeout", { card, shop });
       return errorResponse("価格情報の取得がタイムアウトしました", 504);
     }
 
     console.error("[/api/price] Unexpected error", {
       message: err instanceof Error ? err.message : "Unknown error",
       card,
-      setCode,
+      shop,
     });
     return errorResponse("価格情報の取得に失敗しました", 500);
   }

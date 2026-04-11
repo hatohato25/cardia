@@ -12,11 +12,14 @@ export type OcrResponse = {
   collectorNumber: string | null;
 };
 
+// 対応ショップの識別子
+export type ShopId = "hareruya" | "hareruya2";
+
 // /api/price のレスポンス型
 export type PriceResponse = {
   price: number | null;
   currency: "JPY";
-  source: "hareruya";
+  source: ShopId;
   cached: boolean;
   // ISO8601形式のキャッシュ保存日時（キャッシュ未ヒット時はnull）
   cachedAt: string | null;
@@ -26,7 +29,7 @@ export type PriceResponse = {
 export type CachedPrice = {
   price: number | null;
   currency: "JPY";
-  source: "hareruya";
+  source: ShopId;
   cachedAt: string;
 };
 
