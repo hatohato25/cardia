@@ -260,19 +260,26 @@ function extractSetAndCollectorNumber(
 
   // レアリティ+コレクター番号パターン（行単位）を M プレフィックスパターンより優先して試みる
   // "R 0328" のように行全体がレアリティ記号+4桁数字で構成される行を検索する
-  // 先頭ゼロ除去 → 3桁ゼロ埋め（Hareruya の "(NNN)" 形式に合わせる）
+  // collectorNumber: 先頭ゼロ除去 → 3桁ゼロ埋め（Hareruya の "(NNN)" フィルタ用）
+  // collectorNumberFull: OCRで読んだ元の4桁文字列をそのまま保持（表示用）
   let rarityCollectorNumber: string | null = null;
+  let rarityCollectorNumberFull: string | null = null;
   for (const line of lines) {
     const rarityMatch = RARITY_COLLECTOR_PATTERN.exec(line);
     if (rarityMatch?.[1]) {
-      rarityCollectorNumber = String(parseInt(rarityMatch[1], 10)).padStart(3, "0");
+      const rawRarityDigits = rarityMatch[1]; // "0259" のまま保持
+      rarityCollectorNumber = String(parseInt(rawRarityDigits, 10)).padStart(3, "0"); // "259"（Hareruya APIフィルタ用）
+      rarityCollectorNumberFull = rawRarityDigits; // "0259" のまま（表示用）
       break;
     }
   }
 
   // M プレフィックスパターン（例: "M0010"）でコレクター番号を取得する
+  // collectorNumber: 3桁ゼロ埋め（Hareruya の "(NNN)" フィルタ用）
+  // mPrefixedRawDigits: 元の4桁文字列をそのまま保持（表示用）
   const collectorMatch = M_PREFIXED_COLLECTOR_PATTERN.exec(ocrText);
   const rawCollectorDigits = collectorMatch?.[1] ?? null;
+  const mPrefixedRawDigits = rawCollectorDigits; // "0010" のまま保持（表示用）
   // 4桁数字（例: "0010"）から数値として読み取り3桁ゼロ埋めにする
   const mPrefixedCollectorNumber =
     rawCollectorDigits !== null
@@ -281,6 +288,8 @@ function extractSetAndCollectorNumber(
 
   // レアリティパターンを優先し、なければ M プレフィックスパターンを使う
   const collectorNumber = rarityCollectorNumber ?? mPrefixedCollectorNumber;
+  // 表示用にも同様の優先順位でフルの番号を使う
+  const collectorNumberFullForJa = rarityCollectorNumberFull ?? mPrefixedRawDigits;
 
   // セット略号: "TLA JP ..." のように行頭に2〜4大文字英字が来る行から抽出する
   let setCode: string | null = null;
@@ -293,9 +302,9 @@ function extractSetAndCollectorNumber(
   }
 
   // どちらか一方でも抽出できた場合は返す
-  // 日本語版パターン（レアリティ・Mプレフィックス）では "分子/分母" 形式は存在しない
+  // collectorNumberFull には元の番号（4桁文字列）をそのまま入れて価格タグに表示できるようにする
   if (collectorNumber !== null || setCode !== null) {
-    return { setCode, collectorNumber, collectorNumberFull: null };
+    return { setCode, collectorNumber, collectorNumberFull: collectorNumberFullForJa };
   }
 
   return { setCode: null, collectorNumber: null, collectorNumberFull: null };
