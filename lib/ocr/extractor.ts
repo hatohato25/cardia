@@ -26,12 +26,14 @@ const M_PREFIXED_COLLECTOR_PATTERN = /\bM(\d{4})\b/;
 // レアリティ記号: C(コモン)/U(アンコモン)/R(レア)/M(神話レア)/S(スペシャル)
 const RARITY_COLLECTOR_PATTERN = /^[CURMS]\s+(\d{4})$/;
 
-// ポケモンカードのコレクター番号パターン: 行全体が "NNN/NNN" または "NNN/NNN RARITY" で構成される行
+// ポケモンカードのコレクター番号パターン: 行中に現れる "NNN/NNN" または "NNN/NNN RARITY"（部分マッチ）
 // 例: "199/193 AR" → コレクター番号 "199"
+// 例: "0 20 205/193 AR" → コレクター番号 "205"（行頭のOCRノイズが混入した行にも対応）
+// 行全体マッチ（^...$）ではなく部分マッチにすることで、OCRノイズが前後に付いた行でも抽出できる
 // 先頭が数字なため SET_COLLECTOR_PATTERN_SPACE にマッチしない点を補完する
 // MTGのパワー/タフネス（例: "3/4"）と区別するため、分母が20以上の行のみ対象とする
 // ポケモンカードのコレクター番号分母は最低でも総収録数（通常50以上）が来るため安全
-const POKEMON_COLLECTOR_PATTERN = /^(\d+)\/(\d+)(?:\s+[A-Z]{1,3})?$/;
+const POKEMON_COLLECTOR_PATTERN = /(\d+)\/(\d+)(?:\s+[A-Z]{1,3})?(?:\s|$)/;
 
 // 日本語版カード下部に現れるセット略号パターン: 行頭の大文字英数字2〜5文字
 // 例: "TLA JP MAEL OLLIVIER-HENRY" → "TLA"

@@ -224,6 +224,16 @@ TM & © 2024 Wizards of the Coast`;
       expect(result!.cardName).toBe("コダック");
       expect(result!.collectorNumber).toBe("199");
     });
+
+    it("ノイズが混入した行からもコレクター番号（205/193 AR）を抽出できる", () => {
+      // "0 20 205/193 AR" のように行頭にOCRノイズが混入した場合でも部分マッチで抽出できることを確認する
+      // "HP600"はOCRで一体化されることが多く "HP 600" 形式だと SET_COLLECTOR_PATTERN_SPACE に誤マッチするため結合している
+      const ocrText = `たね\nロケット団のミミッキュ\nHP600\nほうせきごっこ\nのバトルの「アラスタル」のポケモンが持っワザを1つ選\nび、このワザとして使う。\nx2 1\nKY8\nilluns GOSSAN\nbo kreen tree he, the Hayon\n0 20 205/193 AR\nMASZOK Be the br.\n02025 Pokemon/Nintendo/Creatures/GAME FREAK`;
+      const result = extractCardInfo(ocrText);
+      expect(result).not.toBeNull();
+      expect(result!.cardName).toBe("ロケット団のミミッキュ");
+      expect(result!.collectorNumber).toBe("205");
+    });
   });
 
   describe("日本語版MTGカードのレアリティ+コレクター番号パターン", () => {

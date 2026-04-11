@@ -66,6 +66,7 @@ async function fetchFirstProductHandle(
   const query = collectorNumber ? `${cardName} ${collectorNumber}` : cardName;
   const params = new URLSearchParams({ q: query });
   const url = `${HARERUYA2_SEARCH_URL}?${params.toString()}`;
+  console.log("[hareruya2] search URL:", url);
 
   const res = await fetch(url, {
     method: "GET",
