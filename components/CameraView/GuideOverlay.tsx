@@ -22,8 +22,11 @@ const TAG_STYLE = {
   BACKGROUND: "rgba(0, 0, 0, 0.75)",
   TEXT_COLOR: "#ffffff",
   WARNING_COLOR: "#fbbf24",
+  SECONDARY_COLOR: "#9ca3af",
   PADDING: 12,
   FONT_CARD_NAME: "bold 16px sans-serif",
+  // 同名カードの識別表示用（コレクター番号）
+  FONT_COLLECTOR_NUMBER: "12px sans-serif",
   FONT_PRICE: "bold 24px sans-serif",
   FONT_CACHE: "12px sans-serif",
   FONT_WARNING: "11px sans-serif",
@@ -195,7 +198,7 @@ function drawPriceTag(
   guideWidth: number,
   guideHeight: number
 ): void {
-  const { cardName, priceResponse } = data;
+  const { cardName, collectorNumberFull, priceResponse } = data;
   const { price, cached, cachedAt } = priceResponse;
 
   // キャッシュが12時間以上前の場合は「価格が古い可能性があります」警告を出す
@@ -216,15 +219,25 @@ function drawPriceTag(
       font: TAG_STYLE.FONT_CARD_NAME,
       color: TAG_STYLE.TEXT_COLOR,
     },
-    {
-      text:
-        price !== null
-          ? `¥${price.toLocaleString("ja-JP")}`
-          : "価格未発見",
-      font: TAG_STYLE.FONT_PRICE,
-      color: TAG_STYLE.TEXT_COLOR,
-    },
   ];
+
+  // コレクター番号がある場合はカード名の直下に小さく表示する（同名カードの識別用）
+  if (collectorNumberFull !== null) {
+    lines.push({
+      text: collectorNumberFull,
+      font: TAG_STYLE.FONT_COLLECTOR_NUMBER,
+      color: TAG_STYLE.SECONDARY_COLOR,
+    });
+  }
+
+  lines.push({
+    text:
+      price !== null
+        ? `¥${price.toLocaleString("ja-JP")}`
+        : "価格未発見",
+    font: TAG_STYLE.FONT_PRICE,
+    color: TAG_STYLE.TEXT_COLOR,
+  });
 
   if (cached) {
     lines.push({

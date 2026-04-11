@@ -85,8 +85,10 @@ export type FetchStatus =
   | "not_found"
   | "error";
 
-// 価格タグに表示するデータ（カード名と価格レスポンスのペア）
+// 価格タグに表示するデータ（カード名・コレクター番号・価格レスポンスのセット）
 export type PriceTagData = {
   cardName: string;
+  // "分子/分母" 形式（例: "128/101"）。同名カードの識別表示用
+  collectorNumberFull: string | null;
   priceResponse: PriceResponse;
 };

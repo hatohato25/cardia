@@ -116,7 +116,7 @@ export default function CameraView({ selectedShop }: CameraViewProps) {
       const priceResponse = await callPriceApi(cardName, setCode, collectorNumber, collectorNumberFull, selectedShop);
 
       // キャッシュが12時間以上前の場合は警告フラグを立てる（GuideOverlayで判定）
-      const newPriceTagData: PriceTagData = { cardName, priceResponse };
+      const newPriceTagData: PriceTagData = { cardName, collectorNumberFull, priceResponse };
       priceCache.current.set(cacheKey, newPriceTagData);
       setPriceTagData(newPriceTagData);
       setFetchStatus(priceResponse.price !== null ? "found" : "not_found");

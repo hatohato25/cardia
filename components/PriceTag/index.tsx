@@ -4,6 +4,8 @@ import type { PriceResponse } from "@/types";
 
 type PriceTagProps = {
   cardName: string;
+  // "分子/分母" 形式（例: "128/101"）。同名カードが複数ある場合の識別表示用
+  collectorNumberFull: string | null;
   priceResponse: PriceResponse;
 };
 
@@ -15,7 +17,7 @@ const SHOP_LABEL: Record<string, string> = {
   hareruya2: "晴れる屋2",
 };
 
-export default function PriceTag({ cardName, priceResponse }: PriceTagProps) {
+export default function PriceTag({ cardName, collectorNumberFull, priceResponse }: PriceTagProps) {
   const { price, cached, cachedAt, source } = priceResponse;
 
   // cachedAtが12時間以上前の場合は価格が古い可能性があることを警告する
@@ -27,6 +29,9 @@ export default function PriceTag({ cardName, priceResponse }: PriceTagProps) {
   return (
     <div className="bg-black bg-opacity-75 text-white rounded-lg p-3 max-w-xs">
       <p className="text-sm font-medium text-gray-300 truncate">{cardName}</p>
+      {collectorNumberFull !== null && (
+        <p className="text-xs text-gray-400">{collectorNumberFull}</p>
+      )}
       <p className="text-2xl font-bold">
         {price !== null ? `¥${price.toLocaleString("ja-JP")}` : "価格未発見"}
       </p>
