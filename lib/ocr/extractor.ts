@@ -32,6 +32,10 @@ const CARD_NAME_EXCLUSION_PATTERNS_EN = [
   /^(Land|Creature|Instant|Sorcery|Enchantment|Artifact|Planeswalker|Battle)/i,
   /^\d+\/\d+$/,
   /^[A-Z]{2,5}\s*\d+/,
+  // マナコストのOCR誤読行を除外する
+  // 例: "{2}{G}{B}" → "2 gb." / "2gb" のように数字+色マナ略字(wubrgc)に変換されるパターン
+  // カード名が数字+英小文字のみで構成されることはないため安全に除外できる
+  /^\d+\s*[wubrgcWUBRGC\s.]+$/,
 ];
 
 // 日本語版カードタイプ行として除外すべきパターン

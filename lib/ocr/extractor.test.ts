@@ -199,4 +199,50 @@ TM & © 2024 Wizards of the Coast`;
       expect(result!.setCode).toBe("MH3");
     });
   });
+
+  describe("マナコストOCR誤読行のスキップ", () => {
+    // マナコストシンボル（例: {2}{G}{B}）がOCRで "2 gb." 等に誤読されるケースを除外する
+    // 「さいしょく / 2 gb. / 彩色の宇宙儀」のようにマナコストがカード名より前に読まれる場合の回帰テスト
+    const COSMIC_OCR_TEXT = `さいしょく
+2 gb.
+彩色の宇宙儀
+7
+伝説のアーティファクト
+あなたはマナを望む色のマナであるかのように
+支払ってもよい。
+○○○○○○を加える。
+あなたがコントロールしているパーマネ
+ントの中の色1色につき1枚のカードを引く。
+M0107
+LCC JP GABOLEPS
+TM & 2023 Wizards of the Coast`;
+
+    it("マナコスト誤読行（2 gb.）をスキップして正しいカード名を抽出できる", () => {
+      const result = extractCardInfo(COSMIC_OCR_TEXT);
+
+      expect(result).not.toBeNull();
+      expect(result!.cardName).toBe("彩色の宇宙儀");
+    });
+
+    it("マナコスト誤読行をカード名として返さない", () => {
+      const result = extractCardInfo(COSMIC_OCR_TEXT);
+
+      expect(result).not.toBeNull();
+      expect(result!.cardName).not.toBe("2 gb.");
+    });
+
+    it("セット略号 LCC を抽出できる", () => {
+      const result = extractCardInfo(COSMIC_OCR_TEXT);
+
+      expect(result).not.toBeNull();
+      expect(result!.setCode).toBe("LCC");
+    });
+
+    it("コレクター番号 107 を抽出できる", () => {
+      const result = extractCardInfo(COSMIC_OCR_TEXT);
+
+      expect(result).not.toBeNull();
+      expect(result!.collectorNumber).toBe("107");
+    });
+  });
 });
