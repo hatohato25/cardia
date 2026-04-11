@@ -70,8 +70,9 @@ const CARD_TYPE_PATTERNS_JA = [
   // ポケモンカードの進化段階・システム行を除外する
   // 丸数字（①〜⑨、U+2460〜U+2468）+「進化」のパターン（例: "⑦進化"）はカード名ではない
   /^[①-⑨]進化$/,
-  // 「たねポケモン」「1進化」「2進化」等の進化段階行を除外する
-  /^(たねポケモン|[1-9]進化|VSTAR|VMAX|GX|EX|V$)/,
+  // 「たねポケモン」「進化」「1進化」「2進化」等の進化段階行を除外する
+  // 数字なしの「進化」単体（OCRで先頭に印刷される進化段階ヘッダ）もスキップ対象とするため \d* で0桁以上に対応する
+  /^(たねポケモン|\d*進化|VSTAR|VMAX|GX|EX|V$)/,
   // 「〜から進化」行を除外する（例: "カジッチュから進化"）
   /から進化$/,
   // 「HP」単体行またはHP+数字行を除外する
@@ -155,9 +156,11 @@ function extractCardName(lines: string[]): string | null {
     const leadingDigitMatch = /^(\d)([\u3040-\u30FF\u4E00-\u9FFF])/.exec(line);
     const cleanedLine = leadingDigitMatch ? line.slice(1) : line;
 
-    // OCRノイズで末尾に " x 210円" や " × 150ダメージ" のようなダメージ行が混入した場合を除去する
-    // カード名行に別行のダメージ量テキストが結合されるケースで発生するため、" x/× 数字" 以降を削除する
-    const trailingNoiseMatch = /\s+[x×]\s*\d+[円点ダ]?.*$/.exec(cleanedLine);
+    // OCRノイズで末尾に " x 210円"、" × 150ダメージ"、" 210円" のようなダメージ行が混入した場合を除去する
+    // カード名行に別行のダメージ量テキストが結合されるケースで発生するため、" (x/×) 数字" 以降を削除する
+    // "x/×" はオプション（?）にすることで、乗算記号なしで直接 " 210円" と付くケース（ワザダメージ）も除去できる
+    // カード名に "円" や "点" が含まれるMTG/ポケモンカードは存在しないため、これらを含む末尾サフィックスは安全に除去できる
+    const trailingNoiseMatch = /\s+(?:[x×]\s*)?\d+[円点ダ].*$/.exec(cleanedLine);
     if (trailingNoiseMatch) {
       const trimmed = cleanedLine.slice(0, trailingNoiseMatch.index).trim();
       // ゴミ除去後にカード名として意味のある文字列が残る場合のみ返す
