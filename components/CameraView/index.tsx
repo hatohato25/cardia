@@ -96,7 +96,7 @@ export default function CameraView({ selectedShop }: CameraViewProps) {
       return;
     }
 
-    const { cardName, setCode, collectorNumber } = ocrResponse;
+    const { cardName, setCode, collectorNumber, collectorNumberFull } = ocrResponse;
 
     // フロントキャッシュにヒットすれば価格APIをスキップして即表示
     // ただし price: null のキャッシュはスキップして再取得する（価格未発見は再試行させる）
@@ -113,7 +113,7 @@ export default function CameraView({ selectedShop }: CameraViewProps) {
 
     // 価格検索APIを呼ぶ
     try {
-      const priceResponse = await callPriceApi(cardName, setCode, collectorNumber, selectedShop);
+      const priceResponse = await callPriceApi(cardName, setCode, collectorNumber, collectorNumberFull, selectedShop);
 
       // キャッシュが12時間以上前の場合は警告フラグを立てる（GuideOverlayで判定）
       const newPriceTagData: PriceTagData = { cardName, priceResponse };
@@ -426,11 +426,14 @@ async function callPriceApi(
   cardName: string,
   setCode: string | null,
   collectorNumber: string | null,
+  collectorNumberFull: string | null,
   shop: ShopId
 ): Promise<PriceResponse> {
   const params = new URLSearchParams({ card: cardName, shop });
   if (setCode) params.set("set", setCode);
   if (collectorNumber) params.set("num", collectorNumber);
+  // hareruya2 のフォールバック検索で "分子/分母" 形式を使うために渡す
+  if (collectorNumberFull) params.set("numFull", collectorNumberFull);
 
   const res = await fetch(`/api/price?${params.toString()}`);
 

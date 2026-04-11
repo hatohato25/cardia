@@ -10,8 +10,9 @@ import type { CardInfo } from "@/types";
 // 例: "M11", "NEO", "MID", "KHM", "MH2", "MKM"
 // コレクター番号: 数字/数字 または 数字のみ（例: "123/456", "42"）
 // 注意: \s は改行も含むため改行を挟んだ誤マッチを防ぐため [^\S\n] を使う
+// キャプチャグループ: [1]=セット略号, [2]=分子, [3]=分母（存在する場合）
 const SET_COLLECTOR_PATTERN_SYMBOL =
-  /\b([A-Z][A-Z0-9]{1,5})[^\S\n]*[·・\-\/][^\S\n]*(\d+)(?:\/\d+)?/;
+  /\b([A-Z][A-Z0-9]{1,5})[^\S\n]*[·・\-\/][^\S\n]*(\d+)(?:\/(\d+))?/;
 
 // スペース区切りのセット情報パターン: "WWK 31/145" 形式（行全体がセット情報）
 // コレクター番号は2桁以上を要求することで "X2 1" のような1桁ノイズを除外する
@@ -114,7 +115,7 @@ export function extractCardInfo(ocrText: string): CardInfo | null {
     return null;
   }
 
-  const { setCode, collectorNumber } = extractSetAndCollectorNumber(
+  const { setCode, collectorNumber, collectorNumberFull } = extractSetAndCollectorNumber(
     ocrText,
     lines
   );
@@ -123,6 +124,7 @@ export function extractCardInfo(ocrText: string): CardInfo | null {
     cardName,
     setCode,
     collectorNumber,
+    collectorNumberFull,
   };
 }
 
@@ -193,13 +195,21 @@ function extractSetAndCollectorNumber(
 ): {
   setCode: string | null;
   collectorNumber: string | null;
+  // "分子/分母" 形式（例: "128/101"）。hareruya2 のフォールバック検索に使う
+  collectorNumberFull: string | null;
 } {
   // まず記号区切りパターン（"SET · NNN"）を試みる
+  // キャプチャグループ: [1]=セット略号, [2]=分子, [3]=分母（存在する場合）
   const symbolMatch = SET_COLLECTOR_PATTERN_SYMBOL.exec(ocrText);
   if (symbolMatch) {
+    const numerator = symbolMatch[2] ?? null;
+    const denominator = symbolMatch[3] ?? null;
     return {
       setCode: symbolMatch[1] ?? null,
-      collectorNumber: symbolMatch[2] ?? null,
+      collectorNumber: numerator,
+      collectorNumberFull: numerator !== null && denominator !== null
+        ? `${numerator}/${denominator}`
+        : null,
     };
   }
 
@@ -214,9 +224,13 @@ function extractSetAndCollectorNumber(
       const matchedCode = spaceMatch[1] ?? null;
       // ポケモンカード特有の非セット略号はスキップする（HP行等の誤検知防止）
       if (matchedCode !== null && NON_SET_CODES.has(matchedCode)) continue;
+      // SET_COLLECTOR_PATTERN_SPACE は "WWK 31/145" 全体にマッチするため
+      // 元の行から "分子/分母" 形式を直接取り出す
+      const fullMatch = /(\d+\/\d+)/.exec(line);
       return {
         setCode: matchedCode,
         collectorNumber: spaceMatch[2] ?? null,
+        collectorNumberFull: fullMatch ? fullMatch[1] : null,
       };
     }
   }
@@ -229,9 +243,14 @@ function extractSetAndCollectorNumber(
     if (pokemonMatch) {
       const denominator = parseInt(pokemonMatch[2] ?? "0", 10);
       if (denominator >= 20) {
+        const numerator = pokemonMatch[1] ?? null;
+        const denominatorStr = pokemonMatch[2] ?? null;
         return {
           setCode: null,
-          collectorNumber: pokemonMatch[1] ?? null,
+          collectorNumber: numerator,
+          collectorNumberFull: numerator !== null && denominatorStr !== null
+            ? `${numerator}/${denominatorStr}`
+            : null,
         };
       }
     }
@@ -274,9 +293,10 @@ function extractSetAndCollectorNumber(
   }
 
   // どちらか一方でも抽出できた場合は返す
+  // 日本語版パターン（レアリティ・Mプレフィックス）では "分子/分母" 形式は存在しない
   if (collectorNumber !== null || setCode !== null) {
-    return { setCode, collectorNumber };
+    return { setCode, collectorNumber, collectorNumberFull: null };
   }
 
-  return { setCode: null, collectorNumber: null };
+  return { setCode: null, collectorNumber: null, collectorNumberFull: null };
 }

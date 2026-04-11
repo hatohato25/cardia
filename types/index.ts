@@ -2,14 +2,20 @@
 export type CardInfo = {
   cardName: string;
   setCode: string | null;
+  // 分子のみ（例: "128"）。hareruya2 の通常検索クエリに使う
   collectorNumber: string | null;
+  // "分子/分母" 形式（例: "128/101"）。hareruya2 のフォールバック検索に使う
+  collectorNumberFull: string | null;
 };
 
 // /api/ocr のレスポンス型
 export type OcrResponse = {
   cardName: string | null;
   setCode: string | null;
+  // 分子のみ（例: "128"）
   collectorNumber: string | null;
+  // "分子/分母" 形式（例: "128/101"）。hareruya2 フォールバック検索用
+  collectorNumberFull: string | null;
 };
 
 // 対応ショップの識別子

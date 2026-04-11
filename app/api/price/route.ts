@@ -19,6 +19,8 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   const card = searchParams.get("card");
   const setCode = searchParams.get("set");
   const collectorNumber = searchParams.get("num");
+  // hareruya2 のフォールバック検索で "分子/分母" 形式（例: "128/101"）を使うためのパラメータ
+  const collectorNumberFull = searchParams.get("numFull");
   const shopParam = searchParams.get("shop") ?? "hareruya";
 
   // cardパラメータは必須
@@ -57,7 +59,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
     const parseResult =
       shop === "hareruya2"
-        ? await fetchHareruya2Price(card, collectorNumber)
+        ? await fetchHareruya2Price(card, collectorNumber, collectorNumberFull)
         : await fetchHareruyaPrice(card, setCode, collectorNumber);
 
     console.log(`[/api/price] ${shop} result`, JSON.stringify(parseResult));

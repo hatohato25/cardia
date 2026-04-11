@@ -25,7 +25,9 @@ type ShopifyProductJson = {
 // 2. /products/{handle}.json のShopify APIから価格を取得（JSON APIなのでパース安定）
 export async function fetchHareruya2Price(
   cardName: string,
-  collectorNumber: string | null
+  collectorNumber: string | null,
+  // "分子/分母" 形式（例: "128/101"）。フォールバック検索で分子のみより絞り込み精度が上がる
+  collectorNumberFull: string | null
 ): Promise<Hareruya2ParseResult> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
@@ -36,9 +38,11 @@ export async function fetchHareruya2Price(
     if (!handle) {
       // OCRがカード名を誤読した場合でもコレクター番号はhareruya2の商品名に含まれる可能性があるため
       // コレクター番号のみで再検索してヒット率を上げる
-      if (collectorNumber !== null) {
-        console.log("[hareruya2] fallback search by collector number only");
-        const fallbackHandle = await fetchFirstProductHandle(collectorNumber, null, controller.signal);
+      // "128" のみだと無関係カードがヒットするため "128/101" 形式を優先して使う
+      const fallbackQuery = collectorNumberFull ?? collectorNumber;
+      if (fallbackQuery !== null) {
+        console.log("[hareruya2] fallback search by collector number only", { fallbackQuery });
+        const fallbackHandle = await fetchFirstProductHandle(fallbackQuery, null, controller.signal);
         if (!fallbackHandle) {
           return { found: false, reason: "not_found" };
         }

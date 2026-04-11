@@ -101,6 +101,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       cardName: cardInfo?.cardName ?? null,
       setCode: cardInfo?.setCode ?? null,
       collectorNumber: cardInfo?.collectorNumber ?? null,
+      collectorNumberFull: cardInfo?.collectorNumberFull ?? null,
     };
 
     return NextResponse.json<OcrResponse>(response);
