@@ -150,5 +150,53 @@ I&2025 Wizards of the Coast`;
       expect(result).not.toBeNull();
       expect(result!.cardName).not.toMatch(/^伝説の/);
     });
+
+    it("キーワード能力行（瞬速・飛行）をカード名として抽出しない", () => {
+      const result = extractCardInfo(ACTUAL_OCR_TEXT);
+
+      expect(result).not.toBeNull();
+      expect(result!.cardName).not.toBe("瞬速");
+      expect(result!.cardName).not.toBe("飛行");
+    });
+  });
+
+  describe("長音符を含むカード名のOCRパターン", () => {
+    // 「攪乱のフルート」のように長音符「ー」を含むカード名が正しく抽出されることを確認する
+    // 以前「ー」をカードタイプのダッシュと誤判定してスキップしていたバグの回帰テスト
+    const FLUTE_OCR_TEXT = `かくらん
+攪乱のフルート
+2
+アーティファクト
+瞬速
+乱のフルートが戦場に出るに際し、カード名1つ
+を選ぶ。
+その選ばれたカード名を持つ呪文を唱えるためのコ
+ストは多くなる。
+その選ばれたカード名を持つ発生源の起動型能力
+は、それがマナ能力でないかぎり起動できない。
+R 0209
+MH3 JP XAVIER RIBEIRO
+TM & © 2024 Wizards of the Coast`;
+
+    it("長音符を含むカード名（攪乱のフルート）を正しく抽出できる", () => {
+      const result = extractCardInfo(FLUTE_OCR_TEXT);
+
+      expect(result).not.toBeNull();
+      expect(result!.cardName).toBe("攪乱のフルート");
+    });
+
+    it("キーワード能力行（瞬速）をカード名として抽出しない", () => {
+      const result = extractCardInfo(FLUTE_OCR_TEXT);
+
+      expect(result).not.toBeNull();
+      expect(result!.cardName).not.toBe("瞬速");
+    });
+
+    it("セット略号 MH3 を抽出できる", () => {
+      const result = extractCardInfo(FLUTE_OCR_TEXT);
+
+      expect(result).not.toBeNull();
+      expect(result!.setCode).toBe("MH3");
+    });
   });
 });
