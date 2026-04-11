@@ -34,6 +34,18 @@ export async function fetchHareruya2Price(
     // Step1: 検索HTMLから最初の商品ハンドルを取得する
     const handle = await fetchFirstProductHandle(cardName, collectorNumber, controller.signal);
     if (!handle) {
+      // OCRがカード名を誤読した場合でもコレクター番号はhareruya2の商品名に含まれる可能性があるため
+      // コレクター番号のみで再検索してヒット率を上げる
+      if (collectorNumber !== null) {
+        console.log("[hareruya2] fallback search by collector number only");
+        const fallbackHandle = await fetchFirstProductHandle(collectorNumber, null, controller.signal);
+        if (!fallbackHandle) {
+          return { found: false, reason: "not_found" };
+        }
+        // フォールバック時もrequstedCardNameはOCRで読み取ったカード名を引き継ぐ
+        // fetchProductPrice内でproduct.titleにより上書きされるため問題ない
+        return await fetchProductPrice(fallbackHandle, cardName, controller.signal);
+      }
       return { found: false, reason: "not_found" };
     }
 
