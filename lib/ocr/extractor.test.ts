@@ -200,6 +200,43 @@ TM & © 2024 Wizards of the Coast`;
     });
   });
 
+  describe("ポケモンカードのOCRパターン", () => {
+    // 実際の問題ログ: カミッチュカードのOCRテキスト
+    // 構造: 1行目=進化段階（⑦進化）, 2行目=カード名（カミッチュ）, ...
+    const KAMITCHU_OCR_TEXT = `⑦進化\nカミッチュ\nHP\nカジッチュから進化\nNO.1011 りんごあめポケモン 高さ: 0.4m 重さ: 4.4kg\n90@\nコーティングアタック\n20\n次の相手の番、このポケモンはたねポケモンからワザのダメージ\nを受けない。\n0x2\n抵抗力\nにげる\nillus. Souichirou Gunjima\nを出している そとッチュと尻尾を出している\nH SV7 011/102 C\nなかッチュが助け合い りんごのなかで暮らす。\n2024 Pokémon/Nintendo/Creatures/GAME FREAK.`;
+
+    it("進化段階行（⑦進化）をスキップしてカード名（カミッチュ）を取得できる", () => {
+      const result = extractCardInfo(KAMITCHU_OCR_TEXT);
+      expect(result).not.toBeNull();
+      expect(result!.cardName).toBe("カミッチュ");
+    });
+
+    it("進化段階行（⑦進化）をカード名として返さない", () => {
+      const result = extractCardInfo(KAMITCHU_OCR_TEXT);
+      expect(result).not.toBeNull();
+      expect(result!.cardName).not.toBe("⑦進化");
+    });
+
+    it("ポケモンカードのコレクター番号（199/193 AR）を抽出できる", () => {
+      const ocrText = `たね\nコダック\n-70\n特性\nしめりけ\nこのポケモンがいるかぎり、おたがいのポケモン全員は、そのポケモン\n自身をきせつさせる効果の特性が、すべてなくなる。\n00\nぶつかる\n20\n7×21 民分\nいつも頭痛に悩まされている。 この頭痛が\n激しくなると不思議な力を使いはじめる。\nHun REND\n20\n199/193 AR\n●2025 Pokemon/Nintendo/Creatures/GAME FREAK`;
+      const result = extractCardInfo(ocrText);
+      expect(result).not.toBeNull();
+      expect(result!.cardName).toBe("コダック");
+      expect(result!.collectorNumber).toBe("199");
+    });
+  });
+
+  describe("日本語版MTGカードのレアリティ+コレクター番号パターン", () => {
+    it("日本語版MTGカードの R+4桁コレクター番号（R 0328）を抽出できる", () => {
+      const ocrText = `と\nでしょ\n行き届いた書庫\n801\n土地 平地・島\n行き届いた書庫はタップ状態で戦場に出る。\n行き届いた書庫が戦場に出たとき、諜報1 を行う。\nR 0328\nM&2024 Wizards of the Coast\nMKM JP SERGEY GLUSHAKOV`;
+      const result = extractCardInfo(ocrText);
+      expect(result).not.toBeNull();
+      expect(result!.cardName).toBe("行き届いた書庫");
+      expect(result!.collectorNumber).toBe("328");  // 先頭ゼロ除去・3桁ゼロ埋め
+      expect(result!.setCode).toBe("MKM");
+    });
+  });
+
   describe("マナコストOCR誤読行のスキップ", () => {
     // マナコストシンボル（例: {2}{G}{B}）がOCRで "2 gb." 等に誤読されるケースを除外する
     // 「さいしょく / 2 gb. / 彩色の宇宙儀」のようにマナコストがカード名より前に読まれる場合の回帰テスト

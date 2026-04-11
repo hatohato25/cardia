@@ -57,7 +57,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
     const parseResult =
       shop === "hareruya2"
-        ? await fetchHareruya2Price(card)
+        ? await fetchHareruya2Price(card, collectorNumber)
         : await fetchHareruyaPrice(card, setCode, collectorNumber);
 
     console.log(`[/api/price] ${shop} result`, JSON.stringify(parseResult));

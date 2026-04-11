@@ -21,17 +21,18 @@ type ShopifyProductJson = {
 };
 
 // hareruya2 検索→価格取得フロー:
-// 1. /search?q={cardName} のHTMLからproductハンドルを取得（cheerioでスクレイピング）
+// 1. /search?q={cardName} または /search?q={cardName NNN/NNN} のHTMLからproductハンドルを取得（cheerioでスクレイピング）
 // 2. /products/{handle}.json のShopify APIから価格を取得（JSON APIなのでパース安定）
 export async function fetchHareruya2Price(
-  cardName: string
+  cardName: string,
+  collectorNumber: string | null
 ): Promise<Hareruya2ParseResult> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
   try {
     // Step1: 検索HTMLから最初の商品ハンドルを取得する
-    const handle = await fetchFirstProductHandle(cardName, controller.signal);
+    const handle = await fetchFirstProductHandle(cardName, collectorNumber, controller.signal);
     if (!handle) {
       return { found: false, reason: "not_found" };
     }
@@ -57,9 +58,13 @@ export async function fetchHareruya2Price(
 // 検索結果HTMLの最初の .card-wrapper a[href="/products/..."] からハンドルを取得する
 async function fetchFirstProductHandle(
   cardName: string,
+  collectorNumber: string | null,
   signal: AbortSignal
 ): Promise<string | null> {
-  const params = new URLSearchParams({ q: cardName });
+  // collectorNumber がある場合は "カード名 NNN/NNN" 形式で検索して絞り込む
+  // コレクター番号なしだと同名の別バリアント（通常版/AR等）が混在するため
+  const query = collectorNumber ? `${cardName} ${collectorNumber}` : cardName;
+  const params = new URLSearchParams({ q: query });
   const url = `${HARERUYA2_SEARCH_URL}?${params.toString()}`;
 
   const res = await fetch(url, {

@@ -150,6 +150,8 @@ function parseHareruyaApiResponse(
     if (collectorFiltered.length > 0) filteredDocs = collectorFiltered;
   }
 
+  // 現状: 非Foil優先（Foilカード撮影時は非Foil価格が返る可能性がある）
+  // TODO: OCRからFoil情報を取得できるようになったら isFoil フラグを追加して切り分ける
   // 在庫ありの通常版（非Foil）を優先して検索する
   // 在庫なしの場合は在庫なし含めて最安値を返す
   const inStockNonFoil = filteredDocs.filter(

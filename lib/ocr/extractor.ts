@@ -21,12 +21,24 @@ const SET_COLLECTOR_PATTERN_SPACE =
 // 例: "M0010" → コレクター番号 "010"（M除去・先頭ゼロ保持・不要ゼロは後で整形）
 const M_PREFIXED_COLLECTOR_PATTERN = /\bM(\d{4})\b/;
 
+// 日本語版MTGカード下部に現れるレアリティ+コレクター番号パターン（行全体）
+// 例: "R 0328" → コレクター番号 "0328"（先頭ゼロ保持、整形は呼び出し側で行う）
+// レアリティ記号: C(コモン)/U(アンコモン)/R(レア)/M(神話レア)/S(スペシャル)
+const RARITY_COLLECTOR_PATTERN = /^[CURMS]\s+(\d{4})$/;
+
+// ポケモンカードのコレクター番号パターン: 行全体が "NNN/NNN" または "NNN/NNN RARITY" で構成される行
+// 例: "199/193 AR" → コレクター番号 "199"
+// 先頭が数字なため SET_COLLECTOR_PATTERN_SPACE にマッチしない点を補完する
+// MTGのパワー/タフネス（例: "3/4"）と区別するため、分母が20以上の行のみ対象とする
+// ポケモンカードのコレクター番号分母は最低でも総収録数（通常50以上）が来るため安全
+const POKEMON_COLLECTOR_PATTERN = /^(\d+)\/(\d+)(?:\s+[A-Z]{1,3})?$/;
+
 // 日本語版カード下部に現れるセット略号パターン: 行頭の大文字英数字2〜5文字
 // 例: "TLA JP MAEL OLLIVIER-HENRY" → "TLA"
 // 例: "MH3 JP XAVIER RIBEIRO" → "MH3"（英数字混在のセット略号に対応）
 const SET_CODE_LINE_PATTERN = /^([A-Z][A-Z0-9]{1,4})\s+[A-Z]{2}/;
 
-// カード名として除外すべきノイズパターン（英語版MTGのシステムテキストなど）
+// カード名として除外すべきノイズパターン（MTG英語版・汎用システムテキストなど）
 const CARD_NAME_EXCLUSION_PATTERNS_EN = [
   /^(Legendary|Basic|Snow|World)/i,
   /^(Land|Creature|Instant|Sorcery|Enchantment|Artifact|Planeswalker|Battle)/i,
@@ -36,6 +48,9 @@ const CARD_NAME_EXCLUSION_PATTERNS_EN = [
   // 例: "{2}{G}{B}" → "2 gb." / "2gb" のように数字+色マナ略字(wubrgc)に変換されるパターン
   // カード名が数字+英小文字のみで構成されることはないため安全に除外できる
   /^\d+\s*[wubrgcWUBRGC\s.]+$/,
+  // 丸数字（①〜⑨、U+2460〜U+2468）で始まる行はシステムテキストとして除外する
+  // ポケモンカードの進化段階表記（例: "⑦進化"）等がカード名に誤検知されるのを防ぐ
+  /^[①-⑨]/,
 ];
 
 // 日本語版カードタイプ行として除外すべきパターン
@@ -48,6 +63,15 @@ const CARD_TYPE_PATTERNS_JA = [
   /[—－]/, // カードタイプのダッシュ区切りを含む行（例: "伝説のクリーチャー—バイソン"）
   // MTGキーワード能力行を除外する（カード名としてのスキップ対象）
   /^(瞬速|飛行|先制攻撃|二段攻撃|トランプル|到達|絆魂|速攻|警戒|呪禁|破壊不能|威迫|護法|接死|不滅|連繋|上陸|英雄的|果敢|感化|召集|続唱|奇跡|予顕|予示|変身|変容|合体|補強|再活|永続|脱出|適応|設計図|調査|製造|培養|発見|探偵|偽装|隠蔽|反逆|変異|生体|転生|城砦|殻)/,
+  // ポケモンカードの進化段階・システム行を除外する
+  // 丸数字（①〜⑨、U+2460〜U+2468）+「進化」のパターン（例: "⑦進化"）はカード名ではない
+  /^[①-⑨]進化$/,
+  // 「たねポケモン」「1進化」「2進化」等の進化段階行を除外する
+  /^(たねポケモン|[1-9]進化|VSTAR|VMAX|GX|EX|V$)/,
+  // 「〜から進化」行を除外する（例: "カジッチュから進化"）
+  /から進化$/,
+  // 「HP」単体行またはHP+数字行を除外する
+  /^HP\d*$/,
 ];
 
 // ひらがなのみで構成された行（ふりがな行）かどうかを判定する
@@ -158,15 +182,47 @@ function extractSetAndCollectorNumber(
     }
   }
 
+  // ポケモンカードのコレクター番号パターンを行単位で試みる: "199/193 AR" → "199"
+  // MTGパターンより前に評価することで、純粋な数字/数字行を正しく処理する
+  // 分母が20以上の場合のみコレクター番号とみなし、MTGのパワー/タフネス（例: "3/4"）を除外する
+  for (const line of lines) {
+    const pokemonMatch = POKEMON_COLLECTOR_PATTERN.exec(line);
+    if (pokemonMatch) {
+      const denominator = parseInt(pokemonMatch[2] ?? "0", 10);
+      if (denominator >= 20) {
+        return {
+          setCode: null,
+          collectorNumber: pokemonMatch[1] ?? null,
+        };
+      }
+    }
+  }
+
   // 日本語版カードのパターンを試みる
-  // コレクター番号: "M0010" → "010"（Mプレフィックス除去、数値の先頭ゼロ保持して3桁に整形）
+
+  // レアリティ+コレクター番号パターン（行単位）を M プレフィックスパターンより優先して試みる
+  // "R 0328" のように行全体がレアリティ記号+4桁数字で構成される行を検索する
+  // 先頭ゼロ除去 → 3桁ゼロ埋め（Hareruya の "(NNN)" 形式に合わせる）
+  let rarityCollectorNumber: string | null = null;
+  for (const line of lines) {
+    const rarityMatch = RARITY_COLLECTOR_PATTERN.exec(line);
+    if (rarityMatch?.[1]) {
+      rarityCollectorNumber = String(parseInt(rarityMatch[1], 10)).padStart(3, "0");
+      break;
+    }
+  }
+
+  // M プレフィックスパターン（例: "M0010"）でコレクター番号を取得する
   const collectorMatch = M_PREFIXED_COLLECTOR_PATTERN.exec(ocrText);
   const rawCollectorDigits = collectorMatch?.[1] ?? null;
   // 4桁数字（例: "0010"）から数値として読み取り3桁ゼロ埋めにする
-  const collectorNumber =
+  const mPrefixedCollectorNumber =
     rawCollectorDigits !== null
       ? String(parseInt(rawCollectorDigits, 10)).padStart(3, "0")
       : null;
+
+  // レアリティパターンを優先し、なければ M プレフィックスパターンを使う
+  const collectorNumber = rarityCollectorNumber ?? mPrefixedCollectorNumber;
 
   // セット略号: "TLA JP ..." のように行頭に2〜4大文字英字が来る行から抽出する
   let setCode: string | null = null;
