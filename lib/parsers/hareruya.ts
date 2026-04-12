@@ -47,9 +47,63 @@ export async function fetchHareruyaPrice(
   setCode: string | null,
   collectorNumber: string | null
 ): Promise<HareruyaParseResult> {
+  // AbortController はタイムアウト全体で共有し、フォールバック検索にも適用する
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+
+  try {
+    // 1次検索: カード名キーワードで検索し、セット略号・コレクター番号でフィルタリング
+    const primaryResult = await fetchAndParse(
+      cardName,
+      cardName,
+      collectorNumber,
+      setCode,
+      controller.signal
+    );
+
+    if (primaryResult.found) {
+      return primaryResult;
+    }
+
+    // OCRによるカード名誤読でnot_foundになるケースに対応するフォールバック
+    // setCode と collectorNumber が揃っている場合はセット略号で再検索して番号で絞り込む
+    if (
+      primaryResult.reason === "not_found" &&
+      setCode !== null &&
+      collectorNumber !== null
+    ) {
+      console.log("[hareruya] fallback search by set code", {
+        setCode,
+        collectorNumber,
+      });
+      return await fetchAndParse(
+        setCode,
+        cardName,
+        collectorNumber,
+        setCode,
+        controller.signal
+      );
+    }
+
+    return primaryResult;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+// 指定キーワードでHareruya APIを叩き、レスポンスをパースして返す内部ヘルパー
+// kw と requestedCardName を分離することで、フォールバック時にセット略号で検索しつつ
+// カード名を返り値に使えるようにしている
+async function fetchAndParse(
+  kw: string,
+  requestedCardName: string,
+  collectorNumber: string | null,
+  setCode: string | null,
+  signal: AbortSignal
+): Promise<HareruyaParseResult> {
   const params = new URLSearchParams({
     // kwがHareruyaの実際のキーワード検索パラメータ（fq.card_nameは機能しない）
-    kw: cardName,
+    kw,
     // 価格1円以上に絞り込む（0円の未設定商品を除外）
     "fq.price": "1~*",
     // シングルカードカテゴリに限定
@@ -66,9 +120,6 @@ export async function fetchHareruyaPrice(
   const url = `${HARERUYA_API_URL}?${params.toString()}`;
   console.log("[hareruya] search URL:", url);
 
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-
   try {
     const res = await fetch(url, {
       method: "GET",
@@ -81,16 +132,21 @@ export async function fetchHareruyaPrice(
         Referer: "https://www.hareruyamtg.com/ja/products/search",
         "X-Requested-With": "XMLHttpRequest",
       },
-      signal: controller.signal,
+      signal,
     });
 
     if (!res.ok) {
-      console.error("[hareruya] HTTP error", { status: res.status, cardName });
+      console.error("[hareruya] HTTP error", { status: res.status, kw });
       return { found: false, reason: "parse_error" };
     }
 
     const data = (await res.json()) as HareruyaApiResponse;
-    return parseHareruyaApiResponse(data, cardName, collectorNumber, setCode);
+    return parseHareruyaApiResponse(
+      data,
+      requestedCardName,
+      collectorNumber,
+      setCode
+    );
   } catch (err) {
     if (err instanceof Error && err.name === "AbortError") {
       // タイムアウトエラーは呼び出し元で適切に処理するために再スロー
@@ -98,11 +154,9 @@ export async function fetchHareruyaPrice(
     }
     console.error("[hareruya] Fetch error", {
       message: err instanceof Error ? err.message : "Unknown error",
-      cardName,
+      kw,
     });
     return { found: false, reason: "parse_error" };
-  } finally {
-    clearTimeout(timeoutId);
   }
 }
 
