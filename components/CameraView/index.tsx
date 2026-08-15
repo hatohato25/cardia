@@ -23,8 +23,11 @@ export default function CameraView({ selectedShop }: CameraViewProps) {
   // レート制限受信時のOCRスキップ管理
   const rateLimitedUntilRef = useRef<number | null>(null);
   // GCP障害時のリトライ管理
+  // サーバ側（lib/ocr/client.ts）が既に最大3回まで再送しているため、
+  // ここで多段にリトライするとVision APIへの再送が最大12回に増幅し輻輳を悪化させる。
+  // フロントは「次の安定フレームでもう一度だけ試す」に留める。
   const ocrRetryCountRef = useRef(0);
-  const MAX_OCR_RETRY = 3;
+  const MAX_OCR_RETRY = 1;
 
   // フロントキャッシュ: カード名 → 価格タグデータのMap
   const priceCache = useRef<Map<string, PriceTagData>>(new Map());
@@ -67,7 +70,7 @@ export default function CameraView({ selectedShop }: CameraViewProps) {
         return;
       }
 
-      // GCP障害（502/504）時は500ms後に最大3回リトライ
+      // GCP障害（502/504）時は次の安定フレームでの再試行に賭ける（MAX_OCR_RETRY 回まで）
       if (error.code === "OCR_FAILED" || error.code === "OCR_TIMEOUT") {
         if (ocrRetryCountRef.current < MAX_OCR_RETRY) {
           ocrRetryCountRef.current++;
