@@ -5,11 +5,6 @@ import type { OcrResponse, PriceResponse, FetchStatus, PriceTagData, ShopId } fr
 import { useCameraStream } from "./useCameraStream";
 import GuideOverlay from "./GuideOverlay";
 
-// 静止検出の設定定数
-const STABILITY_THRESHOLD = 8;        // ピクセル差分の閾値（調整可能）
-const STABILITY_FRAMES = 5;           // 安定と判定するフレーム数
-const POST_SEARCH_COOLDOWN_MS = 3000; // 検索後のクールダウン
-
 type CameraViewProps = {
   selectedShop: ShopId;
 };
@@ -22,21 +17,9 @@ export default function CameraView({ selectedShop }: CameraViewProps) {
   const isOcrPendingRef = useRef(false);
   // レート制限受信時のOCRスキップ管理
   const rateLimitedUntilRef = useRef<number | null>(null);
-  // GCP障害時のリトライ管理
-  // サーバ側（lib/ocr/client.ts）が既に最大3回まで再送しているため、
-  // ここで多段にリトライするとVision APIへの再送が最大12回に増幅し輻輳を悪化させる。
-  // フロントは「次の安定フレームでもう一度だけ試す」に留める。
-  const ocrRetryCountRef = useRef(0);
-  const MAX_OCR_RETRY = 1;
 
   // フロントキャッシュ: カード名 → 価格タグデータのMap
   const priceCache = useRef<Map<string, PriceTagData>>(new Map());
-
-  // 手動タップ時にOCRを即実行するためのトリガー関数をRefで保持
-  // startMainThreadCapture内のクロージャから参照するため
-  const manualTriggerRef = useRef<(() => void) | null>(null);
-  // startMainThreadCaptureのインターバルを停止するクリーンアップ関数をRefで保持
-  const captureCleanupRef = useRef<(() => void) | null>(null);
 
   const [fetchStatus, setFetchStatus] = useState<FetchStatus>("idle");
   const [priceTagData, setPriceTagData] = useState<PriceTagData | null>(null);
@@ -45,8 +28,10 @@ export default function CameraView({ selectedShop }: CameraViewProps) {
   // OCR→価格検索フローを実行する
   // imageBase64: キャプチャした画像のBase64文字列
   const handleFrame = useCallback(async (imageBase64: string) => {
-    // レート制限中はOCRをスキップ
+    // レート制限中はOCRをスキップ（タップへの反応がないと故障と誤解されるため理由を表示する）
     if (rateLimitedUntilRef.current !== null && Date.now() < rateLimitedUntilRef.current) {
+      setStatusMessage("リクエストが多すぎます。しばらくお待ちください");
+      setFetchStatus("error");
       return;
     }
 
@@ -57,7 +42,6 @@ export default function CameraView({ selectedShop }: CameraViewProps) {
     let ocrResponse: OcrResponse;
     try {
       ocrResponse = await callOcrApi(imageBase64);
-      ocrRetryCountRef.current = 0;
     } catch (err) {
       const error = err as { code?: string };
 
@@ -70,16 +54,11 @@ export default function CameraView({ selectedShop }: CameraViewProps) {
         return;
       }
 
-      // GCP障害（502/504）時は次の安定フレームでの再試行に賭ける（MAX_OCR_RETRY 回まで）
+      // GCP障害（502/504）時はフロントで自動再送しない。
+      // サーバ側（lib/ocr/client.ts）が既に再送しており、ここでさらに送ると
+      // Vision API の課金ユニットが増幅するため、再試行はユーザーの再タップに委ねる
       if (error.code === "OCR_FAILED" || error.code === "OCR_TIMEOUT") {
-        if (ocrRetryCountRef.current < MAX_OCR_RETRY) {
-          ocrRetryCountRef.current++;
-          await sleep(500);
-          isOcrPendingRef.current = false;
-          // 次フレームで再試行させるためここで終了
-          return;
-        }
-        setStatusMessage("OCRサービスが一時的に利用できません");
+        setStatusMessage("OCRサービスが一時的に利用できません。もう一度タップしてください");
         setFetchStatus("error");
         isOcrPendingRef.current = false;
         return;
@@ -132,15 +111,6 @@ export default function CameraView({ selectedShop }: CameraViewProps) {
     isOcrPendingRef.current = false;
   }, [selectedShop]);
 
-  // キャプチャを開始する（メインスレッドで実行、OffscreenCanvas分離は将来フェーズ）
-  // transferControlToOffscreen後はcanvasのwidthが0になり映像が取れないため
-  // 現時点はcanvas.toDataURLベースのメインスレッドキャプチャに統一する
-  const startWorkerCapture = useCallback((canvas: HTMLCanvasElement) => {
-    const { trigger, cleanup } = startMainThreadCapture(canvas, handleFrame);
-    manualTriggerRef.current = trigger;
-    captureCleanupRef.current = cleanup;
-  }, [handleFrame]);
-
   // OffscreenCanvas用のcanvasを動画ソースとして描画する別のcanvasが必要
   // videoから直接transferControlToOffscreenはできないため、
   // videoフレームをcanvasに描画してからWorkerに渡す
@@ -177,21 +147,12 @@ export default function CameraView({ selectedShop }: CameraViewProps) {
   useEffect(() => {
     if (cameraState.status === "streaming") {
       startDrawingVideoToCanvas();
-      const canvas = drawingCanvasRef.current;
-      if (canvas) {
-        startWorkerCapture(canvas);
-      }
     }
 
     return () => {
       if (drawIntervalRef.current) {
         clearInterval(drawIntervalRef.current);
         drawIntervalRef.current = null;
-      }
-      // メインスレッドキャプチャのインターバルも停止する
-      if (captureCleanupRef.current) {
-        captureCleanupRef.current();
-        captureCleanupRef.current = null;
       }
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -202,12 +163,26 @@ export default function CameraView({ selectedShop }: CameraViewProps) {
     requestCamera();
   }, [requestCamera]);
 
-  // ガイド枠タップ時にOCRを即実行する
+  // ガイド枠タップ時にだけ OCR を実行する。
+  // 静止検出による自動送信はカメラを置いたままにすると数秒ごとに Vision API を呼び続け、
+  // 無料枠を大きく超える課金が発生したため廃止し、送信はユーザー操作に限定する
   const handleGuideAreaTap = useCallback(() => {
-    if (manualTriggerRef.current) {
-      manualTriggerRef.current();
+    // 応答待ちの間の連打で Vision API を多重に呼ばないようにする
+    if (isOcrPendingRef.current) return;
+
+    const canvas = drawingCanvasRef.current;
+    if (!canvas) return;
+
+    // カメラ映像がまだ canvas に描画されていない場合は空画像になるため送信しない
+    const imageBase64 = canvas.toDataURL("image/jpeg", 0.8);
+    if (imageBase64 === "data:,") {
+      setStatusMessage("カメラの準備中です。少し待ってからタップしてください");
+      setFetchStatus("error");
+      return;
     }
-  }, []);
+
+    void handleFrame(imageBase64);
+  }, [handleFrame]);
 
   if (cameraState.status === "error") {
     return (
@@ -281,133 +256,6 @@ export default function CameraView({ selectedShop }: CameraViewProps) {
   );
 }
 
-// メインスレッドフォールバック: OffscreenCanvas未サポート時のキャプチャ実装
-// 静止検出を組み込み、フレームが安定したときのみOCRリクエストを送信する
-// 戻り値は { trigger: 手動OCRトリガー, cleanup: インターバル停止 } のオブジェクト
-type MainThreadCaptureHandle = {
-  trigger: () => void;
-  cleanup: () => void;
-};
-
-function startMainThreadCapture(
-  canvas: HTMLCanvasElement,
-  onFrame: (imageBase64: string) => Promise<void>
-): MainThreadCaptureHandle {
-  let intervalId: ReturnType<typeof setInterval> | null = null;
-
-  let isPending = false;
-  // 検索後のクールダウンタイム（静止検出を一時停止する期限）
-  let cooldownUntil = 0;
-  // 直近フレームの差分履歴（STABILITY_FRAMES本分保持）
-  const diffHistory: number[] = [];
-  // 前フレームのImageData（静止検出の比較対象）
-  let prevImageData: ImageData | null = null;
-  // 静止検出をスキップして即OCRを実行するフラグ
-  let manualTriggerPending = false;
-
-  // 差分計算用の小さいcanvas（負荷削減のため64x64にリサイズして比較）
-  const diffCanvas = document.createElement("canvas");
-  diffCanvas.width = 64;
-  diffCanvas.height = 64;
-  const diffCtx = diffCanvas.getContext("2d");
-
-  // 現在のcanvasフレームをリサイズしてImageDataを取得するヘルパー
-  const getResizedImageData = (): ImageData | null => {
-    if (!diffCtx) return null;
-    diffCtx.drawImage(canvas, 0, 0, 64, 64);
-    return diffCtx.getImageData(0, 0, 64, 64);
-  };
-
-  intervalId = setInterval(() => {
-    if (isPending) return;
-    // 空フレームはスキップ（カメラ未起動時など）
-    const imageBase64 = canvas.toDataURL("image/jpeg", 0.8);
-    if (imageBase64 === "data:,") return;
-
-    const now = Date.now();
-
-    // 手動タップトリガーが発火していれば静止検出をバイパスしてすぐOCRを実行
-    if (manualTriggerPending) {
-      manualTriggerPending = false;
-      // タップ後はクールダウンを設定して次の静止検出まで待機させる
-      cooldownUntil = now + POST_SEARCH_COOLDOWN_MS;
-      prevImageData = null;
-      diffHistory.length = 0;
-
-      isPending = true;
-      onFrame(imageBase64)
-        .catch(() => {})
-        .finally(() => {
-          isPending = false;
-        });
-      return;
-    }
-
-    // クールダウン中は静止検出をスキップ
-    if (now < cooldownUntil) {
-      return;
-    }
-
-    // フレーム差分を計算して安定性を判定する
-    const curr = getResizedImageData();
-    if (curr && prevImageData) {
-      const diff = calcFrameDiff(prevImageData, curr);
-      diffHistory.push(diff);
-      // 直近STABILITY_FRAMES本分のみ保持
-      if (diffHistory.length > STABILITY_FRAMES) {
-        diffHistory.shift();
-      }
-
-      // STABILITY_FRAMES本すべての差分が閾値以下なら「安定」と判定してOCRを実行
-      if (
-        diffHistory.length === STABILITY_FRAMES &&
-        diffHistory.every((d) => d <= STABILITY_THRESHOLD)
-      ) {
-        // 安定検出後はクールダウンを設定して連続送信を防ぐ
-        cooldownUntil = now + POST_SEARCH_COOLDOWN_MS;
-        prevImageData = null;
-        diffHistory.length = 0;
-
-        isPending = true;
-        onFrame(imageBase64)
-          .catch(() => {})
-          .finally(() => {
-            isPending = false;
-          });
-        return;
-      }
-    }
-
-    prevImageData = curr;
-  }, 500);
-
-  return {
-    // manualTriggerRefに保持してタップイベントで呼び出す手動OCRトリガー
-    trigger: () => {
-      manualTriggerPending = true;
-    },
-    // コンポーネントのアンマウント時やカメラ停止時にインターバルを停止するクリーンアップ
-    cleanup: () => {
-      if (intervalId !== null) {
-        clearInterval(intervalId);
-        intervalId = null;
-      }
-    },
-  };
-}
-
-// canvas から ImageData を取得して前フレームとの平均ピクセル差を計算する
-// 負荷を下げるためにcanvasを小さくリサイズしてから比較する（64x64程度）
-function calcFrameDiff(prev: ImageData, curr: ImageData): number {
-  let sum = 0;
-  for (let i = 0; i < prev.data.length; i += 4) {
-    sum += Math.abs(prev.data[i] - curr.data[i]);     // R
-    sum += Math.abs(prev.data[i+1] - curr.data[i+1]); // G
-    sum += Math.abs(prev.data[i+2] - curr.data[i+2]); // B
-  }
-  return sum / (prev.data.length / 4);
-}
-
 async function callOcrApi(imageBase64: string): Promise<OcrResponse> {
   const res = await fetch("/api/ocr", {
     method: "POST",
@@ -459,8 +307,4 @@ function getCameraErrorMessage(reason: string): string {
     default:
       return "カメラの起動に失敗しました。ブラウザを再読み込みしてください。";
   }
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
